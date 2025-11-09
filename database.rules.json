@@ -1,0 +1,85 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+
+    "roles": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+        ".write": "auth != null && (auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2' || root.child('roles').child(auth.uid).child('generalAdmin').val() == true)"
+      }
+    },
+
+    "units": {
+      "$unitCode": {
+        ".read": "auth != null && (root.child('units').child($unitCode).child('members').child(auth.uid).val() == true || root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+        ".write": "auth != null && (root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+
+        "members": {
+          "$memberUid": {
+            ".write": "auth != null && (auth.uid == $memberUid || root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+          }
+        },
+        "admins": {
+          "$adminUid": {
+            ".read": "auth != null && (root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+            ".write": "auth != null && (root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+          }
+        },
+        "meta": {
+          ".read": "auth != null",
+          ".write": "auth != null && (root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+        },
+        "missoes": {
+          ".read": "auth != null",
+          ".write": "auth != null && (root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+        },
+        "inscricoes": {
+          "$missaoId": {
+            "$turnoId": {
+              "$userId": {
+                ".read": "auth != null && (auth.uid == $userId || root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+                ".write": "auth != null && (auth.uid == $userId || root.child('units').child($unitCode).child('admins').child(auth.uid).val() == true || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "missoes": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+    },
+    "inscricoes": {
+      "$missaoId": {
+        "$turnoId": {
+          "$userId": {
+            ".write": "auth != null && auth.uid == $userId"
+          }
+        }
+      }
+    },
+    "usuarios": {
+      "$userId": {
+        ".read": "auth != null && auth.uid == $userId",
+        ".write": "auth != null && auth.uid == $userId"
+      }
+    },
+    "users": {
+      ".read": false,
+      "$userId": {
+        ".read": "auth != null && (auth.uid == $userId || root.child('roles').child(auth.uid).child('generalAdmin').val() == true || root.child('roles').child(auth.uid).child('unitAdmin').exists())",
+        ".write": "auth != null && auth.uid == $userId"
+      }
+    },
+    "logs": {
+      ".read": "auth != null && (root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')",
+      ".write": "auth != null"
+    },
+    "config": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('roles').child(auth.uid).child('generalAdmin').val() == true || auth.uid == 'sr692NnyYFV1EtCPZqTou7dO24z2')"
+    }
+  }
+}
