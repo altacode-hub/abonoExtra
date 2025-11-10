@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { defineSecret } from 'firebase-functions/params';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -8,6 +9,9 @@ if (!admin.apps.length) {
 
 const db = admin.database();
 const messaging = admin.messaging();
+
+// Optional secret for email delivery via SendGrid
+const SENDGRID_API_KEY = defineSecret('SENDGRID_API_KEY');
 
 type InscricaoPayload = {
   missaoId: string;
@@ -135,3 +139,112 @@ export const cronCleanup = onSchedule('every monday 03:00', async () => {
   });
   if (Object.keys(updates).length) await db.ref('/').update(updates);
 });
+
+type NotifyEscalaPayload = {
+  unit: string;
+  date: string; // YYYY-MM-DD
+  escalaId: string;
+};
+
+// Dispara notificações push e email para efetivo escalado ao gerar a escala
+export const notifyEscalaGerada = onCall<{ unit: string; date: string; escalaId: string }>(
+  { secrets: [SENDGRID_API_KEY] },
+  async (request) => {
+    // Apenas admins de unidade/autenticados devem poder chamar
+    const uid = request.auth?.uid;
+    if (!uid) return { ok: false, reason: 'unauthenticated' };
+    const { unit, date, escalaId } = request.data || ({} as NotifyEscalaPayload);
+    if (!unit || !date || !escalaId) return { ok: false, reason: 'invalid-args' };
+
+    const monthKey = (date || '').slice(0, 7);
+    const escalaRef = db.ref(`/units/${unit}/escalas/${monthKey}/${escalaId}`);
+    const escalaSnap = await escalaRef.get();
+    const escala = escalaSnap.val();
+    if (!escala) return { ok: false, reason: 'escala-not-found' };
+
+    const efetivo: Record<string, any> = escala.efetivo || {};
+    const uids = Object.keys(efetivo);
+    if (uids.length === 0) return { ok: true, sent: 0 };
+
+    const titulo: string = escala.titulo || 'Escala';
+    const referencia: string = escala.referencia || '';
+    const local: string = escala.local || '';
+    const inicio: string = escala.inicio || '';
+    const fim: string = escala.fim || '';
+    const body = `${date} • ${referencia || local} • ${inicio || ''}${fim ? ` - ${fim}` : ''}`.trim();
+
+    // Carrega perfis para email e tokens FCM
+    const tokens: string[] = [];
+    const emails: string[] = [];
+    const namesByEmail: Record<string, string> = {};
+    for (const targetUid of uids) {
+      try {
+        const profSnap = await db.ref(`/users/${targetUid}/profile`).get();
+        const prof = profSnap.val() || {};
+        const tokenSnap = await db.ref(`/users/${targetUid}/fcmToken`).get();
+        const token = tokenSnap.val();
+        if (token) tokens.push(token);
+        const email: string | undefined = prof.email || efetivo[targetUid]?.email || undefined;
+        if (email) {
+          emails.push(email);
+          namesByEmail[email] = prof.nomeGuerra || prof.nomeCompleto || efetivo[targetUid]?.nome || targetUid;
+        }
+      } catch {
+        // ignore permission errors
+      }
+    }
+
+    // Envia push por FCM (multicast)
+    let pushCount = 0;
+    if (tokens.length > 0) {
+      try {
+        const res = await messaging.sendMulticast({
+          tokens,
+          notification: {
+            title: `Escala gerada: ${titulo}`,
+            body,
+          },
+          data: {
+            unit,
+            date,
+            escalaId,
+            referencia,
+            local,
+          },
+        });
+        pushCount = res.successCount || 0;
+      } catch (e) {
+        console.warn('Falha FCM notifyEscalaGerada', e);
+      }
+    }
+
+    // Envia email via SendGrid, se configurado
+    let emailCount = 0;
+    const sgApiKey = SENDGRID_API_KEY.value();
+    if (sgApiKey && emails.length > 0) {
+      try {
+        const sgMail = await import('@sendgrid/mail');
+        sgMail.default.setApiKey(sgApiKey);
+        const msg = {
+          from: 'no-reply@abonoextra.altacode.dev',
+          subject: `Escala gerada: ${titulo}`,
+          html: `<p>Você foi escalado para <strong>${titulo}</strong> (${referencia || local}) em <strong>${date}</strong>, horário <strong>${inicio}${fim ? ` - ${fim}` : ''}</strong>.</p>`,
+        } as any;
+        const personals = emails.map((to) => ({ to, ...msg, name: namesByEmail[to] }));
+        const resp = await sgMail.default.send(personals, false);
+        emailCount = Array.isArray(resp) ? resp.length : emails.length;
+      } catch (e) {
+        console.warn('Falha SendGrid notifyEscalaGerada', e);
+      }
+    }
+
+    // Log simples
+    await db.ref('/logs').push({
+      acao: 'notify-escala-gerada',
+      detalhes: { unit, date, escalaId, pushCount, emailCount },
+      timestamp: Date.now(),
+    });
+
+    return { ok: true, pushCount, emailCount };
+  }
+);

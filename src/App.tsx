@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { Home } from './pages/Home';
 import Login from './pages/Login';
@@ -16,8 +17,30 @@ import NovaUnidade from './pages/NovaUnidade';
 import GerenciarUnidade from './pages/GerenciarUnidade';
 import Missao from './pages/Missao';
 import NovaMissao from './pages/NovaMissao';
+import { auth, db, messagingPromise } from './services/firebase';
+import { ref, set } from 'firebase/database';
+import { getToken } from 'firebase/messaging';
 
 function App() {
+  // Captura e salva o token FCM do usuário autenticado para receber push
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (!user) return;
+      try {
+        const messaging = await messagingPromise;
+        if (!messaging) return;
+        const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
+        const token = await getToken(messaging, vapidKey ? { vapidKey } : undefined);
+        if (token) {
+          await set(ref(db, `/users/${user.uid}/fcmToken`), token);
+        }
+      } catch {
+        // Ignora erros de permissão/ambiente
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
     <div className="min-h-screen bg-surface-gray">
       <Routes>

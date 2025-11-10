@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onValue, ref, update, get, set } from 'firebase/database';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import { db } from '../services/firebase';
+import { app, db } from '../services/firebase';
 import { buildEfetivo, buildEscalaFanout, makeEscalaId, parseHorarioToISO } from '../services/firebase/escalas';
 import { WeeklyCalendar } from '../components/WeeklyCalendar';
 
@@ -374,6 +375,14 @@ export default function ConsolidarEscala() {
     const escalaUpdates = buildEscalaFanout(unit, effectiveDate, escalaId, titulo, referencia, local, inicioTs, fimTs, efetivo, inicio, fim);
     Object.assign(updates, escalaUpdates);
     await update(ref(db), updates);
+    // Disparar notificações aos escalados (push/email)
+    try {
+      const functions = getFunctions(app);
+      const notify = httpsCallable(functions, 'notifyEscalaGerada');
+      await notify({ unit, date: effectiveDate, escalaId });
+    } catch (e) {
+      // silencioso: se falhar, não bloqueia
+    }
     navigate(`/escala?unit=${unit}&date=${effectiveDate}`);
   };
 
