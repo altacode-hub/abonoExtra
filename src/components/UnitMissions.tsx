@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { onValue, ref, set, remove, get } from 'firebase/database';
 import { db } from '../services/firebase';
+import { makeEscalaId } from '../services/firebase/escalas';
 import { MissionCard } from './MissionCard';
 import { auth } from '../services/firebase';
 
@@ -41,6 +42,7 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
   const [templates, setTemplates] = useState<Record<string, MissionTemplate>>({});
   const [myEnrollments, setMyEnrollments] = useState<Record<string, { status?: string; nome?: string; funcao?: string }>>({});
   const [myProfile, setMyProfile] = useState<{ nomeGuerra?: string; nomeCompleto?: string } | null>(null);
+  const [finalizedEscalas, setFinalizedEscalas] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -72,6 +74,20 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
     const d = String(selectedDate.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }, [selectedDate]);
+
+  // Índice de escalas finalizadas (por mês)
+  useEffect(() => {
+    if (!unitCode || !selectedDate) return;
+    const y = selectedDate.getFullYear();
+    const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+    const monthKey = `${y}-${m}`;
+    const r = ref(db, `/units/${unitCode}/escalasIndex/${monthKey}`);
+    const unsub = onValue(r, (snap) => {
+      const val = snap.val() || {};
+      setFinalizedEscalas(new Set(Object.keys(val)));
+    });
+    return () => unsub();
+  }, [unitCode, selectedDate]);
 
   const dow = selectedDate.getDay(); // 0-6
 
@@ -173,87 +189,104 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
               };
               return parseStart(a[1].horario) - parseStart(b[1].horario);
             })
-            .map(([id, m]) => (
+            .map(([id, m]) => {
+              const [tidGuess] = id.split(':');
+              const escalaId = makeEscalaId(dateIso, tidGuess || id, m.referencia, m.local);
+              const isFinalizada = finalizedEscalas.has(escalaId);
+              return (
+                <MissionCard
+                  key={id}
+                  mission={{
+                    id,
+                    titulo: m.titulo,
+                    local: m.local,
+                    horario: m.horario,
+                    tipo: m.tipo,
+                    disponivel: m.disponivel ?? true,
+                    data: selectedDate.toISOString().split('T')[0],
+                    inscrito: !!myEnrollments[id],
+                    inscritoStatus: myEnrollments[id]?.status as any,
+                    referencia: m.referencia,
+                  }}
+                  hideToggle={isFinalizada || myEnrollments[id]?.status === 'escalado'}
+                  statusBadge={(() => {
+                    const status = myEnrollments[id]?.status;
+                    if (status === 'escalado') {
+                      return (
+                        <div className="flex flex-col items-start gap-1">
+                          <div className="text-xs text-gray-text font-medium">{myProfile?.nomeGuerra || myEnrollments[id]?.nome || auth.currentUser?.displayName || ''}</div>
+                          {myEnrollments[id]?.funcao && (
+                            <div className="text-xs text-gray-light">{myEnrollments[id]?.funcao}</div>
+                          )}
+                          <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">
+                            você está escalado para esta missão
+                          </span>
+                        </div>
+                      );
+                    }
+                    if (isFinalizada) {
+                      return <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">escala finalizada</span>;
+                    }
+                    if (status === 'voluntario') {
+                      return <span className="inline-block text-secondary text-xs">você está como voluntário</span>;
+                    }
+                    if ((m.disponivel ?? true) === true) {
+                      return <span className="inline-block text-secondary text-xs">precisa de voluntário</span>;
+                    }
+                    return null;
+                  })()}
+                  onToggle={(missionId, enrolled) => {
+                    const user = auth.currentUser;
+                    if (!user) return;
+                    const dateIso = selectedDate.toISOString().split('T')[0];
+                    const basePath = `/units/${unitCode}/inscricoes/${dateIso}/${missionId}/${user.uid}`;
+                    if (enrolled) {
+                      set(ref(db, basePath), {
+                        userId: user.uid,
+                        nome: user.displayName || '',
+                        email: user.email || '',
+                        status: 'voluntario',
+                        timestamp: Date.now(),
+                        titulo: m.titulo,
+                        referencia: m.referencia || m.local,
+                        local: m.local,
+                        tipo: m.tipo,
+                        horario: m.horario,
+                        unit: unitCode,
+                      });
+                    } else {
+                      remove(ref(db, basePath));
+                    }
+                  }}
+                />
+              );
+            })}
+          {/* Mensagem removida conforme solicitado */}
+          {derivedFromTemplates.map((m) => (
               <MissionCard
-                key={id}
+                key={m.id}
                 mission={{
-                  id,
+                  id: m.id,
                   titulo: m.titulo,
                   local: m.local,
                   horario: m.horario,
                   tipo: m.tipo,
                   disponivel: m.disponivel ?? true,
-                  data: selectedDate.toISOString().split('T')[0],
-                  inscrito: !!myEnrollments[id],
-                  inscritoStatus: myEnrollments[id]?.status as any,
+                  data: dateIso,
+                  referencia: m.referencia,
+                  inscrito: !!myEnrollments[m.id],
+                  inscritoStatus: myEnrollments[m.id]?.status as any,
                 }}
-                hideToggle={myEnrollments[id]?.status === 'escalado'}
-                statusBadge={(() => {
-                  const status = myEnrollments[id]?.status;
-                  if (status === 'escalado') {
-                    return (
-                      <div className="flex flex-col items-start gap-1">
-                        <div className="text-xs text-gray-text font-medium">{myProfile?.nomeGuerra || myEnrollments[id]?.nome || auth.currentUser?.displayName || ''}</div>
-                        {myEnrollments[id]?.funcao && (
-                          <div className="text-xs text-gray-light">{myEnrollments[id]?.funcao}</div>
-                        )}
-                        <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">
-                          você está escalado para esta missão
-                        </span>
-                      </div>
-                    );
-                  }
-                  if (status === 'voluntario') {
-                    return <span className="inline-block text-secondary text-xs">você está como voluntário</span>;
-                  }
-                  if ((m.disponivel ?? true) === true) {
-                    return <span className="inline-block text-secondary text-xs">precisa de voluntário</span>;
-                  }
-                  return null;
-                })()}
-                onToggle={(missionId, enrolled) => {
-                  const user = auth.currentUser;
-                  if (!user) return;
-                  const dateIso = selectedDate.toISOString().split('T')[0];
-                  const basePath = `/units/${unitCode}/inscricoes/${dateIso}/${missionId}/${user.uid}`;
-                  if (enrolled) {
-                    set(ref(db, basePath), {
-                      userId: user.uid,
-                      nome: user.displayName || '',
-                      email: user.email || '',
-                      status: 'voluntario',
-                      timestamp: Date.now(),
-                      titulo: m.titulo,
-                      referencia: m.referencia || m.local,
-                      local: m.local,
-                      tipo: m.tipo,
-                      horario: m.horario,
-                      unit: unitCode,
-                    });
-                  } else {
-                    remove(ref(db, basePath));
-                  }
-                }}
-              />
-            ))}
-          {/* Mensagem removida conforme solicitado */}
-          {derivedFromTemplates.map((m) => (
-            <MissionCard
-              key={m.id}
-              mission={{
-                id: m.id,
-                titulo: m.titulo,
-                local: m.local,
-                horario: m.horario,
-                tipo: m.tipo,
-                disponivel: m.disponivel ?? true,
-                data: dateIso,
-                referencia: m.referencia,
-                inscrito: !!myEnrollments[m.id],
-                inscritoStatus: myEnrollments[m.id]?.status as any,
-              }}
-              hideToggle={myEnrollments[m.id]?.status === 'escalado'}
-              statusBadge={(() => {
+              hideToggle={(function(){
+                const [tidGuess] = m.id.split(':');
+                const escalaId = makeEscalaId(dateIso, tidGuess || m.id, m.referencia, m.local);
+                const isFinalizada = finalizedEscalas.has(escalaId);
+                return isFinalizada || myEnrollments[m.id]?.status === 'escalado';
+              })()}
+              statusBadge={(function(){
+                const [tidGuess] = m.id.split(':');
+                const escalaId = makeEscalaId(dateIso, tidGuess || m.id, m.referencia, m.local);
+                const isFinalizada = finalizedEscalas.has(escalaId);
                 const status = myEnrollments[m.id]?.status;
                 if (status === 'escalado') {
                   return (
@@ -261,6 +294,9 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                       você está escalado para esta missão
                     </span>
                   );
+                }
+                if (isFinalizada) {
+                  return <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">escala finalizada</span>;
                 }
                 if (status === 'voluntario') {
                   return <span className="inline-block text-secondary text-xs">você está como voluntário</span>;

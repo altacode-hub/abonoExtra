@@ -497,18 +497,18 @@ export default function ConsolidarEscala() {
     <div className="min-h-screen bg-surface-gray pt-[68px] pb-6">
       <PageHeader title="Nova Escala" />
       <div className="px-4 py-4 space-y-4">
-        {/* Barra de progressão */}
-        <nav className="bg-white border rounded-lg p-4 shadow-card">
-          <ol className="flex items-center justify-between">
+        {/* Barra de progressão (responsiva com rolagem horizontal) */}
+        <nav className="bg-white border rounded-lg p-3 shadow-card overflow-x-auto overscroll-x-contain">
+          <ol className="flex items-center justify-start gap-3 md:gap-4 whitespace-nowrap">
             {[
               { key: 1, label: 'Data' },
               { key: 2, label: 'Missão' },
               { key: 3, label: 'Dados' },
               { key: 4, label: 'Efetivo' },
             ].map((s, idx, arr) => (
-              <li key={s.key} className="flex items-center">
+              <li key={s.key} className="flex items-center flex-shrink-0 gap-2">
                 <button
-                  className={`flex items-center gap-2 px-2 py-1 rounded ${wizardStep === s.key ? 'text-primary' : 'text-gray-text'}`}
+                  className={`flex items-center gap-2 px-1 md:px-2 py-1 rounded ${wizardStep === s.key ? 'text-primary' : 'text-gray-text'}`}
                   onClick={() => {
                     // Permitir voltar para passos anteriores
                     if (s.key <= wizardStep) setWizardStep(s.key as 1 | 2 | 3 | 4);
@@ -516,16 +516,16 @@ export default function ConsolidarEscala() {
                   title={s.label}
                 >
                   <span
-                    className={`w-6 h-6 inline-flex items-center justify-center rounded-full text-xs font-semibold ${
+                    className={`w-5 h-5 md:w-6 md:h-6 inline-flex items-center justify-center rounded-full text-[11px] md:text-xs font-semibold ${
                       wizardStep === s.key ? 'bg-primary text-white' : 'bg-secondary/10 text-secondary'
                     }`}
                   >
                     {s.key}
                   </span>
-                  <span className="text-sm">{s.label}</span>
+                  <span className="text-xs md:text-sm">{s.label}</span>
                 </button>
                 {idx < arr.length - 1 && (
-                  <span className={`mx-2 w-12 h-0.5 ${wizardStep > s.key ? 'bg-primary' : 'bg-gray-200'}`} />
+                  <span className={`inline-block mx-2 w-6 md:w-12 h-0.5 ${wizardStep > s.key ? 'bg-primary' : 'bg-gray-200'}`} />
                 )}
               </li>
             ))}
