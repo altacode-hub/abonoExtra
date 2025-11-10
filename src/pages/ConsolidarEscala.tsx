@@ -375,11 +375,14 @@ export default function ConsolidarEscala() {
     const escalaUpdates = buildEscalaFanout(unit, effectiveDate, escalaId, titulo, referencia, local, inicioTs, fimTs, efetivo, inicio, fim);
     Object.assign(updates, escalaUpdates);
     await update(ref(db), updates);
-    // Disparar notificações aos escalados (push/email)
+    // Disparar notificações aos escalados (push/email) somente quando habilitado
     try {
-      const functions = getFunctions(app);
-      const notify = httpsCallable(functions, 'notifyEscalaGerada');
-      await notify({ unit, date: effectiveDate, escalaId });
+      const enabled = (import.meta as any).env?.VITE_ENABLE_NOTIFY_ESCALA === 'true';
+      if (enabled) {
+        const functions = getFunctions(app, 'us-central1');
+        const notify = httpsCallable(functions, 'notifyEscalaGerada');
+        await notify({ unit, date: effectiveDate, escalaId });
+      }
     } catch (e) {
       // silencioso: se falhar, não bloqueia
     }

@@ -47,13 +47,17 @@ export const onInscricaoRequest = onCall<InscricaoPayload>(async (request) => {
   if (hasConflict) return { ok: false, reason: 'conflito-de-horario' };
 
   // Transação para decrementar vaga
-  const res = await turnoRef.transaction((current) => {
-    if (!current) return current;
-    if (current.vagasDisponiveis > 0) {
-      return { ...current, vagasDisponiveis: current.vagasDisponiveis - 1 };
-    }
-    return current; // sem alteração => não comita
-  }, { applyLocally: false });
+  const res = await turnoRef.transaction(
+    (current) => {
+      if (!current) return current;
+      if (current.vagasDisponiveis > 0) {
+        return { ...current, vagasDisponiveis: current.vagasDisponiveis - 1 };
+      }
+      return current; // sem alteração => não comita
+    },
+    undefined,
+    false
+  );
 
   if (!res.committed) {
     return { ok: false, reason: 'vagas-esgotadas' };
@@ -115,10 +119,14 @@ export const onCancelamento = onCall<CancelPayload>(async (request) => {
   // Marca cancelado e restaura vaga
   const inscricaoRef = db.ref(`/inscricoes/${missaoId}/${turnoId}/${uid}`);
   await inscricaoRef.update({ status: 'cancelado', canceladoEm: Date.now() });
-  await turnoRef.transaction((current) => {
-    if (!current) return current;
-    return { ...current, vagasDisponiveis: Math.min(current.vagasTotais, (current.vagasDisponiveis || 0) + 1) };
-  }, { applyLocally: false });
+  await turnoRef.transaction(
+    (current) => {
+      if (!current) return current;
+      return { ...current, vagasDisponiveis: Math.min(current.vagasTotais, (current.vagasDisponiveis || 0) + 1) };
+    },
+    undefined,
+    false
+  );
 
   const logRef = db.ref('/logs').push();
   await logRef.set({ acao: 'cancelamento', userId: uid, detalhes: { missaoId, turnoId }, timestamp: Date.now() });
