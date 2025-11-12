@@ -58,6 +58,8 @@ export default function Escala() {
   const [enrollments, setEnrollments] = useState<Record<string, Record<string, Enrollment>>>({});
   const [templates, setTemplates] = useState<Record<string, MissionTemplate>>({});
   const [finalizedEscalas, setFinalizedEscalas] = useState<Set<string>>(new Set());
+  const [profilePhones, setProfilePhones] = useState<Record<string, string>>({});
+  const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -216,6 +218,48 @@ export default function Escala() {
 
   const unitOptions = Object.entries(adminUnits);
 
+  // Carrega telefones (profile.phone) e status (whatsSent/ack) dos efetivos escalados do dia
+  useEffect(() => {
+    if (!selectedUnit || !dateIso) return;
+    const monthKey = (dateIso || '').slice(0, 7);
+    // Agrega todos os escalados do dia nas missões derivadas
+    const escalados: Array<{ uid: string; escalaId: string }> = [];
+    dailyFromTemplates.forEach((m) => {
+      const [tid] = (m.id || '').split(':');
+      const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
+      (m.volunteers || [])
+        .filter((v) => (v.status || '') === 'escalado')
+        .forEach((v) => escalados.push({ uid: v.uid, escalaId }));
+    });
+    if (escalados.length === 0) {
+      setStatusByUid({});
+      return;
+    }
+    (async () => {
+      const nextPhones: Record<string, string> = { ...profilePhones };
+      const nextStatus: Record<string, { whatsSent?: boolean; ack?: boolean }> = { ...statusByUid };
+      for (const { uid, escalaId } of escalados) {
+        // Telefone de perfil
+        if (!nextPhones[uid]) {
+          try {
+            const snap = await get(ref(db, `/users/${uid}/profile`));
+            const val = snap.val() || {};
+            const phoneRaw = val?.phone || val?.telefone || '';
+            if (phoneRaw) nextPhones[uid] = String(phoneRaw).replace(/[^0-9]/g, '');
+          } catch {}
+        }
+        // Status da escala do usuário
+        try {
+          const sSnap = await get(ref(db, `/userEscalas/${uid}/${monthKey}/${escalaId}/status`));
+          const sVal = sSnap.val() || {};
+          nextStatus[uid] = { whatsSent: !!sVal.whatsSent, ack: !!sVal.ack };
+        } catch {}
+      }
+      setProfilePhones(nextPhones);
+      setStatusByUid(nextStatus);
+    })();
+  }, [selectedUnit, dateIso, dailyFromTemplates.length]);
+
   return (
     <div className="min-h-screen bg-surface-gray pt-[68px] pb-6">
       <PageHeader title="Escala" />
@@ -326,6 +370,7 @@ export default function Escala() {
                                       )}
                                       {/* Ícone WhatsApp sem texto */}
                                       <WhatsappIcon
+                                        phone={profilePhones[v.uid]}
                                         text={`Voce foi escalado no dia ${new Date(Date.parse(dateIso || '')).toLocaleDateString('pt-BR')}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
                                         onSent={() => {
                                           const monthKey = (dateIso || '').slice(0, 7);
@@ -333,10 +378,17 @@ export default function Escala() {
                                           const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
                                           const path = `/userEscalas/${v.uid}/${monthKey}/${escalaId}/status`;
                                           set(ref(db, path), { whatsSent: true }).catch(() => {});
+                                          setStatusByUid((prev) => ({ ...prev, [v.uid]: { ...(prev[v.uid] || {}), whatsSent: true } }));
                                         }}
                                       />
-                                      {/* Status icons — default não enviada; ack poderá ser atualizado pela tela pessoal */}
-                                      <StatusWhatsNotSent />
+                                      {/* Ícones de status reais: ack > whatsSent > não enviada */}
+                                      {statusByUid[v.uid]?.ack ? (
+                                        <StatusAckGiven />
+                                      ) : statusByUid[v.uid]?.whatsSent ? (
+                                        <StatusWhatsSent />
+                                      ) : (
+                                        <StatusWhatsNotSent />
+                                      )}
                                     </span>
                                   ))}
                                 </div>
