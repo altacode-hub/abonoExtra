@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader';
 import { db } from '../services/firebase';
 import { buildEfetivo, buildEscalaFanout, makeEscalaId, parseHorarioToISO } from '../services/firebase/escalas';
 import { WeeklyCalendar } from '../components/WeeklyCalendar';
+import WhatsappIcon from '../components/WhatsappIcon';
 
 type Enrollment = {
   userId: string;
@@ -41,7 +42,7 @@ export default function ConsolidarEscala() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Record<string, { nome?: string; email?: string }>>({});
   const [hasClickedSearch, setHasClickedSearch] = useState(false);
-  const [profiles, setProfiles] = useState<Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string }>>({});
+  const [profiles, setProfiles] = useState<Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }>>({});
   const [existingEscalas, setExistingEscalas] = useState<Set<string>>(new Set());
   const [missionForm, setMissionForm] = useState<{ titulo: string; referencia?: string; local?: string; tipo?: string; horario?: string }>({
     titulo: '',
@@ -264,7 +265,7 @@ export default function ConsolidarEscala() {
     return availableTemplates.find((t) => `${t.id}::${t.referencia || ''}` === key) || null;
   }, [availableTemplates, selectedTemplateId]);
 
-  // Carrega perfis para exibir nome de guerra dos voluntários listados
+  // Carrega perfis para exibir nome de guerra dos voluntários listados e telefone
   useEffect(() => {
     const uids = Object.keys(volunteersMap);
     if (uids.length === 0) {
@@ -273,13 +274,15 @@ export default function ConsolidarEscala() {
     }
     let cancelled = false;
     (async () => {
-      const entries: Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string }> = {};
+      const entries: Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }> = {};
       await Promise.all(
         uids.map(async (uid) => {
           try {
             const snap = await get(ref(db, `/users/${uid}/profile`));
             const p = snap.val() || {};
-            entries[uid] = { nomeGuerra: p?.nomeGuerra, nomeCompleto: p?.nomeCompleto, email: p?.email };
+            const rawPhone = p?.phone || p?.telefone || '';
+            const phone = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '') : '';
+            entries[uid] = { nomeGuerra: p?.nomeGuerra, nomeCompleto: p?.nomeCompleto, email: p?.email, phone };
           } catch {
             // ignore erros de permissão
           }
@@ -828,21 +831,28 @@ export default function ConsolidarEscala() {
                     const funcLabel = funcoes[uid] || volunteersMap[uid]?.funcao || '';
                     return (
                       <li key={uid} className="group">
-                        <div
-                          className="cursor-pointer group-hover:text-primary"
-                          title="Definir função do efetivo"
-                          onClick={() => {
-                            setFuncModalUid(uid);
-                            // tenta pré-selecionar a chave da função pelo label atual
-                            const currentLabel = funcLabel || '';
-                            const entry = Object.entries(funcCatalog).find(([, label]) => label === currentLabel);
-                            setFuncSelectedKey(entry ? entry[0] : '');
-                          }}
-                        >
-                          {displayName}
-                          {funcLabel && (
-                            <span className="ml-2 text-xs text-gray-light">• {funcLabel}</span>
-                          )}
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="cursor-pointer group-hover:text-primary"
+                            title="Definir função do efetivo"
+                            onClick={() => {
+                              setFuncModalUid(uid);
+                              // tenta pré-selecionar a chave da função pelo label atual
+                              const currentLabel = funcLabel || '';
+                              const entry = Object.entries(funcCatalog).find(([, label]) => label === currentLabel);
+                              setFuncSelectedKey(entry ? entry[0] : '');
+                            }}
+                          >
+                            <span className="font-medium text-gray-text">{displayName}</span>
+                            {funcLabel && (
+                              <span className="ml-2 text-xs text-gray-light">• {funcLabel}</span>
+                            )}
+                          </div>
+                          {/* Ícone WhatsApp ao lado de cada efetivo na prévia */}
+                          <WhatsappIcon
+                            phone={profiles[uid]?.phone}
+                            text={`Voce foi escalado no dia ${new Date(Date.parse(selectedDateIso || date || '')).toLocaleDateString('pt-BR')}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
+                          />
                         </div>
                         {/* Editor flutuante controlado por estado global */}
                       </li>

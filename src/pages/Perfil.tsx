@@ -11,6 +11,7 @@ type PerfilData = {
   cpf?: string;
   mf?: string;
   dataNascimento?: string; // ISO yyyy-mm-dd
+  phone?: string; // E.164 digits only
 };
 
 export default function Perfil() {
@@ -82,6 +83,22 @@ export default function Perfil() {
             <label className="flex flex-col gap-1">
               <span className="text-secondary text-sm">Data de Nascimento</span>
               <input type="date" className="bg-white border rounded px-3 py-2" value={perfil.dataNascimento || ''} onChange={(e) => setPerfil({ ...perfil, dataNascimento: e.target.value })} />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-secondary text-sm">Telefone (WhatsApp)</span>
+              <input
+                className="bg-white border rounded px-3 py-2"
+                placeholder="Ex.: 5591999999999"
+                value={perfil.phone || ''}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/[^0-9]/g, '');
+                  setPerfil({ ...perfil, phone: digits });
+                }}
+              />
+              <span className="text-xs text-gray-light">Formato E.164 sem símbolos (apenas dígitos).</span>
             </label>
           </div>
 

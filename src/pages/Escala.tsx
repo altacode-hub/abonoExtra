@@ -219,6 +219,7 @@ export default function Escala() {
   const unitOptions = Object.entries(adminUnits);
 
   // Carrega telefones (profile.phone) e status (whatsSent/ack) dos efetivos escalados do dia
+  const [profileNamesByUid, setProfileNamesByUid] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!selectedUnit || !dateIso) return;
     const monthKey = (dateIso || '').slice(0, 7);
@@ -238,6 +239,7 @@ export default function Escala() {
     (async () => {
       const nextPhones: Record<string, string> = { ...profilePhones };
       const nextStatus: Record<string, { whatsSent?: boolean; ack?: boolean }> = { ...statusByUid };
+      const nextNames: Record<string, string> = { ...profileNamesByUid };
       for (const { uid, escalaId } of escalados) {
         // Telefone de perfil
         if (!nextPhones[uid]) {
@@ -246,6 +248,9 @@ export default function Escala() {
             const val = snap.val() || {};
             const phoneRaw = val?.phone || val?.telefone || '';
             if (phoneRaw) nextPhones[uid] = String(phoneRaw).replace(/[^0-9]/g, '');
+            const ng = val?.nomeGuerra || '';
+            const nc = val?.nomeCompleto || '';
+            if (!nextNames[uid]) nextNames[uid] = ng || nc || uid;
           } catch {}
         }
         // Status da escala do usuário
@@ -257,6 +262,7 @@ export default function Escala() {
       }
       setProfilePhones(nextPhones);
       setStatusByUid(nextStatus);
+      setProfileNamesByUid(nextNames);
     })();
   }, [selectedUnit, dateIso, dailyFromTemplates.length]);
 
@@ -364,7 +370,7 @@ export default function Escala() {
                                 <div className="flex flex-wrap gap-2">
                                   {escaladosSorted.map((v) => (
                                     <span key={v.uid} className="inline-flex items-center gap-2 rounded px-2 py-1 text-xs">
-                                      <span className="font-medium text-gray-text">{v.nome}</span>
+                                      <span className="font-medium text-gray-text">{profileNamesByUid[v.uid] || v.nome}</span>
                                       {v.funcao && (
                                         <span className="text-xs text-gray-light">• {v.funcao}</span>
                                       )}
