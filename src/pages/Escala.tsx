@@ -5,6 +5,8 @@ import { auth, db } from '../services/firebase';
 import { WeeklyCalendar } from '../components/WeeklyCalendar';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MissionCard } from '../components/MissionCard';
+import WhatsappIcon from '../components/WhatsappIcon';
+import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
 import { makeEscalaId } from '../services/firebase/escalas';
 
 type UnitMeta = { titulo: string; descricao?: string; cidade?: string };
@@ -322,6 +324,19 @@ export default function Escala() {
                                       {v.funcao && (
                                         <span className="text-xs text-gray-light">• {v.funcao}</span>
                                       )}
+                                      {/* Ícone WhatsApp sem texto */}
+                                      <WhatsappIcon
+                                        text={`Voce foi escalado no dia ${new Date(Date.parse(dateIso || '')).toLocaleDateString('pt-BR')}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
+                                        onSent={() => {
+                                          const monthKey = (dateIso || '').slice(0, 7);
+                                          const [tid] = (m.id || '').split(':');
+                                          const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
+                                          const path = `/userEscalas/${v.uid}/${monthKey}/${escalaId}/status`;
+                                          set(ref(db, path), { whatsSent: true }).catch(() => {});
+                                        }}
+                                      />
+                                      {/* Status icons — default não enviada; ack poderá ser atualizado pela tela pessoal */}
+                                      <StatusWhatsNotSent />
                                     </span>
                                   ))}
                                 </div>
