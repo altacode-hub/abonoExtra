@@ -199,11 +199,15 @@ export default function Escala() {
         const inicioMin = parseStart(horario);
         const missionId = `${tid}:${idx}`;
         const users = enrollments[missionId] || {};
+        // Usa dados persistidos da inscrição como fonte da verdade para referencia/local
+        const sample = Object.values(users)[0] as Enrollment | undefined;
+        const refFromEnroll = (sample?.referencia || '').trim() || refLabel;
+        const localFromEnroll = (sample?.local || '').trim() || t.local;
         list.push({
           id: missionId,
           titulo: t.titulo || 'Missão',
-          referencia: refLabel,
-          local: t.local,
+          referencia: refFromEnroll,
+          local: localFromEnroll,
           tipo: t.tipo,
           horario,
           volunteers: Object.entries(users).map(([uid, e]) => ({ uid, nome: (e as Enrollment).nome || uid, email: (e as Enrollment).email, status: (e as Enrollment).status, funcao: (e as Enrollment).funcao })),
@@ -247,7 +251,11 @@ export default function Escala() {
             const snap = await get(ref(db, `/users/${uid}/profile`));
             const val = snap.val() || {};
             const phoneRaw = val?.phone || val?.telefone || '';
-            if (phoneRaw) nextPhones[uid] = String(phoneRaw).replace(/[^0-9]/g, '');
+            if (phoneRaw) {
+              const digits = String(phoneRaw).replace(/[^0-9]/g, '');
+              // Garante formato E.164 brasileiro (prefixo 55)
+              nextPhones[uid] = digits.startsWith('55') ? digits : (digits ? `55${digits}` : '');
+            }
             const ng = val?.nomeGuerra || '';
             const nc = val?.nomeCompleto || '';
             if (!nextNames[uid]) nextNames[uid] = ng || nc || uid;
@@ -377,13 +385,14 @@ export default function Escala() {
                                       {/* Ícone WhatsApp sem texto */}
                                       <WhatsappIcon
                                         phone={profilePhones[v.uid]}
-                                        text={`Voce foi escalado no dia ${new Date(Date.parse(dateIso || '')).toLocaleDateString('pt-BR')}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
+                                        text={`Você foi escalado no dia ${selectedDate.toLocaleDateString('pt-BR')}, confira suas escalas no link https://abonoextra.web.app/missoesPessoal`}
+                                        disabled={!profilePhones[v.uid]}
                                         onSent={() => {
                                           const monthKey = (dateIso || '').slice(0, 7);
                                           const [tid] = (m.id || '').split(':');
                                           const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
                                           const path = `/userEscalas/${v.uid}/${monthKey}/${escalaId}/status`;
-                                          set(ref(db, path), { whatsSent: true }).catch(() => {});
+                                          set(ref(db, path), { whatsSent: true, whatsSentTs: Date.now() }).catch(() => {});
                                           setStatusByUid((prev) => ({ ...prev, [v.uid]: { ...(prev[v.uid] || {}), whatsSent: true } }));
                                         }}
                                       />

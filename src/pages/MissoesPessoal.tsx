@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { auth, db } from '../services/firebase';
 import { get, onValue, ref, update } from 'firebase/database';
-import WhatsappIcon from '../components/WhatsappIcon';
+import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
 
 type EscalaIndex = {
   unitId: string;
@@ -13,11 +13,14 @@ type EscalaIndex = {
   fimTs?: number;
 };
 
-type Status = { whatsSent?: boolean; ack?: boolean; ackTs?: number };
+type Status = { whatsSent?: boolean; whatsSentTs?: number; ack?: boolean; ackTs?: number };
 
 export default function MissoesPessoal() {
   const [items, setItems] = useState<Array<{ month: string; id: string; data: EscalaIndex }>>([]);
-  const [phones, setPhones] = useState<Record<string, string>>({});
+  const [statuses, setStatuses] = useState<Record<string, Status>>({});
+  const [detailsOpenKey, setDetailsOpenKey] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string>('');
+  const [toastVisible, setToastVisible] = useState<boolean>(false);
   const uid = auth.currentUser?.uid || '';
 
   // Carrega todas as escalas do usuário em todos os meses
@@ -27,9 +30,12 @@ export default function MissoesPessoal() {
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
       const list: Array<{ month: string; id: string; data: EscalaIndex }> = [];
+      const nextStatuses: Record<string, Status> = {};
       Object.entries(val).forEach(([month, byId]) => {
         Object.entries(byId || {}).forEach(([id, data]) => {
           list.push({ month, id, data: data as EscalaIndex });
+          const s = (data as any)?.status || {};
+          nextStatuses[`${month}/${id}`] = { whatsSent: !!s.whatsSent, whatsSentTs: s.whatsSentTs || 0, ack: !!s.ack, ackTs: s.ackTs || 0 };
         });
       });
       setItems(
@@ -37,22 +43,23 @@ export default function MissoesPessoal() {
           .filter((it) => !!it.data?.inicioTs)
           .sort((a, b) => (a.data.inicioTs || 0) - (b.data.inicioTs || 0))
       );
+      setStatuses(nextStatuses);
     });
     return () => unsub();
   }, [uid]);
 
-  // Carrega telefone do próprio usuário (se disponível)
-  useEffect(() => {
-    if (!uid) return;
-    (async () => {
-      try {
-        const snap = await get(ref(db, `/users/${uid}/profile`));
-        const val = snap.val() || {};
-        const phone = val?.phone || val?.telefone || '';
-        if (phone) setPhones({ [uid]: String(phone).replace(/[^0-9]/g, '') });
-      } catch {}
-    })();
-  }, [uid]);
+  // Confirma ciente e registra no banco de dados
+  const confirmarCiente = async (month: string, escalaId: string) => {
+    try {
+      const statusRef = ref(db, `/userEscalas/${uid}/${month}/${escalaId}/status`);
+      await update(statusRef, { ack: true, ackTs: Date.now() });
+      setStatuses((prev) => ({ ...prev, [`${month}/${escalaId}`]: { ...(prev[`${month}/${escalaId}`] || {}), ack: true, ackTs: Date.now() } }));
+      setToastMsg('Ciente registrado com sucesso');
+      setToastVisible(true);
+      window.setTimeout(() => setToastVisible(false), 2200);
+      window.setTimeout(() => setToastMsg(''), 2600);
+    } catch {}
+  };
 
   const itemsByDay = useMemo(() => {
     return items.map((it) => ({
@@ -63,20 +70,7 @@ export default function MissoesPessoal() {
     }));
   }, [items]);
 
-  const openAckMessage = async (month: string, escalaId: string, displayDate: string) => {
-    const msg = `Voce foi escalado no dia ${displayDate}, confira suas escalas no link https://abonoextra.web.app/missoesPessoal`;
-    const phone = phones[uid];
-    // Registra ACK no banco (proxy: clique solicita ciente)
-    try {
-      const statusRef = ref(db, `/userEscalas/${uid}/${month}/${escalaId}/status`);
-      await update(statusRef, { ack: true, ackTs: Date.now() });
-    } catch {}
-    // Abre WhatsApp com a mensagem
-    const encoded = encodeURIComponent(msg);
-    const base = 'https://wa.me';
-    const href = phone ? `${base}/${phone}?text=${encoded}` : `${base}/?text=${encoded}`;
-    window.open(href, '_blank', 'noopener,noreferrer');
-  };
+  // Mensagens de WhatsApp removidas desta tela: apenas registro no banco
 
   return (
     <div className="min-h-screen bg-surface-gray pt-[68px] pb-6">
@@ -86,7 +80,7 @@ export default function MissoesPessoal() {
           <p className="text-sm text-gray-light">Nenhuma missão encontrada para seu usuário.</p>
         ) : (
           itemsByDay.map(({ month, id, data, dateStr, timeStr }) => (
-            <div key={`${month}/${id}`} className="bg-white border rounded-lg p-4 shadow-card">
+            <div key={`${month}/${id}`} className="bg-white border rounded-lg p-4 shadow-card relative">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm text-gray-light">{dateStr}</div>
@@ -94,25 +88,76 @@ export default function MissoesPessoal() {
                   <div className="text-sm text-gray-text">{data.referencia || data.local || ''}</div>
                   <div className="text-xs text-gray-light">{timeStr}</div>
                 </div>
-                <WhatsappIcon
-                  phone={phones[uid]}
-                  text={`Voce foi escalado no dia ${dateStr}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
-                  onSent={() => {
-                    const statusRef = ref(db, `/userEscalas/${uid}/${month}/${id}/status`);
-                    update(statusRef, { whatsSent: true }).catch(() => {});
-                  }}
-                />
+                {(() => {
+                  const st = statuses[`${month}/${id}`] || {};
+                  const key = `${month}/${id}`;
+                  const ackText = st.ackTs ? new Date(st.ackTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+                  const whatsText = st.whatsSentTs ? new Date(st.whatsSentTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+                  return (
+                    <div className="flex flex-col items-center gap-1">
+                      <button type="button" className="w-6 h-6" onClick={() => setDetailsOpenKey((prev) => (prev === key ? null : key))} title="Ver detalhes do status" aria-label="Ver detalhes do status">
+                        {st.ack ? (
+                          <StatusAckGiven />
+                        ) : st.whatsSent ? (
+                          <StatusWhatsSent />
+                        ) : (
+                          <StatusWhatsNotSent />
+                        )}
+                      </button>
+                      {ackText ? (
+                        <div className="text-[11px] text-gray-light">{ackText}</div>
+                      ) : whatsText ? (
+                        <div className="text-[11px] text-gray-light">{whatsText}</div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
               </div>
+              {detailsOpenKey === `${month}/${id}` && (
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby={`status-title-${month}-${id}`}
+                  className="absolute right-4 top-16 z-10 text-xs text-gray-text bg-white rounded px-3 py-2 border shadow-card w-64"
+                  onKeyDown={(e) => { if (e.key === 'Escape') setDetailsOpenKey(null); }}
+                >
+                  <div id={`status-title-${month}-${id}`} className="font-semibold mb-1">Detalhes do status</div>
+                  <div className="space-y-1">
+                    <div>WhatsApp enviado: {statuses[`${month}/${id}`]?.whatsSent ? 'Sim' : 'Não'}</div>
+                    {statuses[`${month}/${id}`]?.whatsSentTs ? (
+                      <div>
+                        Enviado em: {new Date(statuses[`${month}/${id}`]!.whatsSentTs!).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      </div>
+                    ) : null}
+                    <div>Ciente: {statuses[`${month}/${id}`]?.ack ? 'Sim' : 'Não'}</div>
+                    {statuses[`${month}/${id}`]?.ackTs ? (
+                      <div>
+                        Ciente em: {new Date(statuses[`${month}/${id}`]!.ackTs!).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex justify-end">
+                    <button className="text-xs px-2 py-1 border rounded hover:bg-gray-50" onClick={() => setDetailsOpenKey(null)} autoFocus>
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+              )}
               <button
                 className="mt-3 px-3 py-2 border rounded text-sm"
-                onClick={() => openAckMessage(month, id, dateStr)}
+                onClick={() => confirmarCiente(month, id)}
               >
-                Dar ciente via WhatsApp
+                Dar ciente
               </button>
             </div>
           ))
         )}
-      </div>
+      {toastMsg && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-sm px-4 py-2 rounded shadow-lg transition-opacity duration-300 ${toastVisible ? 'opacity-100' : 'opacity-0'}`}>
+          {toastMsg}
+        </div>
+      )}
     </div>
+  </div>
   );
 }

@@ -6,6 +6,7 @@ import { db } from '../services/firebase';
 import { buildEfetivo, buildEscalaFanout, makeEscalaId, parseHorarioToISO } from '../services/firebase/escalas';
 import { WeeklyCalendar } from '../components/WeeklyCalendar';
 import WhatsappIcon from '../components/WhatsappIcon';
+import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
 
 type Enrollment = {
   userId: string;
@@ -67,6 +68,7 @@ export default function ConsolidarEscala() {
     tipo?: string;
   }>>({});
   const [unitTitle, setUnitTitle] = useState<string>('');
+  const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
 
   // Helpers movidos para services/firebase/escalas.ts
 
@@ -281,7 +283,9 @@ export default function ConsolidarEscala() {
             const snap = await get(ref(db, `/users/${uid}/profile`));
             const p = snap.val() || {};
             const rawPhone = p?.phone || p?.telefone || '';
-            const phone = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '') : '';
+            const digits = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '') : '';
+            // Garante formato E.164 BR (prefixo 55)
+            const phone = digits ? (digits.startsWith('55') ? digits : `55${digits}`) : '';
             entries[uid] = { nomeGuerra: p?.nomeGuerra, nomeCompleto: p?.nomeCompleto, email: p?.email, phone };
           } catch {
             // ignore erros de permissão
@@ -331,6 +335,57 @@ export default function ConsolidarEscala() {
 
   const toggleSelect = (uid: string) => {
     setSelected((prev) => ({ ...prev, [uid]: !prev[uid] }));
+  };
+
+  // Carrega status (whatsSent/ack) para cada efetivo selecionado na prévia
+  useEffect(() => {
+    const effectiveDate = selectedDateIso || date;
+    const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+      ? selectedTemplateId.split('::')[0]
+      : (missionId || selectedTemplateId);
+    if (!unit || !effectiveDate || !effectiveMission) {
+      setStatusByUid({});
+      return;
+    }
+    const monthKey = (effectiveDate || '').slice(0, 7);
+    // Usa metadados imutáveis (missionMeta) para alinhar com Escala.tsx
+    const escalaId = makeEscalaId(
+      effectiveDate,
+      effectiveMission,
+      missionMeta.referencia || missionMeta.local,
+      missionMeta.local
+    );
+    const uids = Object.keys(selected).filter((uid) => selected[uid]);
+    if (uids.length === 0) {
+      setStatusByUid({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, { whatsSent?: boolean; ack?: boolean }> = {};
+      for (const uid of uids) {
+        try {
+          const sSnap = await get(ref(db, `/userEscalas/${uid}/${monthKey}/${escalaId}/status`));
+          const sVal = sSnap.val() || {};
+          next[uid] = { whatsSent: !!sVal.whatsSent, ack: !!sVal.ack };
+        } catch {
+          next[uid] = { whatsSent: false, ack: false };
+        }
+      }
+      if (!cancelled) setStatusByUid(next);
+    })();
+    return () => { cancelled = true; };
+  }, [unit, selectedDateIso, selectedTemplateId, date, missionId, missionForm.referencia, missionForm.local, missionMeta.referencia, missionMeta.local, selected]);
+
+  const formatDateLabel = (iso: string) => {
+    const [yy, mm, dd] = (iso || '').split('-');
+    const y = parseInt(yy || '', 10);
+    const m = parseInt(mm || '', 10);
+    const d = parseInt(dd || '', 10);
+    if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
+      return new Date(y, m - 1, d).toLocaleDateString('pt-BR');
+    }
+    return iso;
   };
 
   const finalize = async () => {
@@ -851,8 +906,34 @@ export default function ConsolidarEscala() {
                           {/* Ícone WhatsApp ao lado de cada efetivo na prévia */}
                           <WhatsappIcon
                             phone={profiles[uid]?.phone}
-                            text={`Voce foi escalado no dia ${new Date(Date.parse(selectedDateIso || date || '')).toLocaleDateString('pt-BR')}, confira suas escalas no link  https://abonoextra.web.app/missoesPessoal`}
+                            text={`Você foi escalado no dia ${formatDateLabel(selectedDateIso || date || '')}, confira suas escalas no link https://abonoextra.web.app/missoesPessoal`}
+                            disabled={!profiles[uid]?.phone}
+                            onSent={() => {
+                              const effectiveDate = selectedDateIso || date;
+                              const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                                ? selectedTemplateId.split('::')[0]
+                                : (missionId || selectedTemplateId);
+                              const monthKey = (effectiveDate || '').slice(0, 7);
+                              // Usa missionMeta (referência/local) para produzir mesmo escalaId que Escala.tsx
+                              const escalaId = makeEscalaId(
+                                effectiveDate || '',
+                                effectiveMission || '',
+                                missionMeta.referencia || missionMeta.local,
+                                missionMeta.local
+                              );
+                              const path = `/userEscalas/${uid}/${monthKey}/${escalaId}/status`;
+                              set(ref(db, path), { whatsSent: true, whatsSentTs: Date.now() }).catch(() => {});
+                              setStatusByUid((prev) => ({ ...prev, [uid]: { ...(prev[uid] || {}), whatsSent: true } }));
+                            }}
                           />
+                          {/* Status ícones conforme estado atual */}
+                          {statusByUid[uid]?.ack ? (
+                            <StatusAckGiven />
+                          ) : statusByUid[uid]?.whatsSent ? (
+                            <StatusWhatsSent />
+                          ) : (
+                            <StatusWhatsNotSent />
+                          )}
                         </div>
                         {/* Editor flutuante controlado por estado global */}
                       </li>
