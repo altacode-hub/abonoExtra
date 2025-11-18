@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { auth, db } from '../services/firebase';
 import { get, onValue, ref, update } from 'firebase/database';
-import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
 
 type EscalaIndex = {
   unitId: string;
@@ -18,7 +17,6 @@ type Status = { whatsSent?: boolean; whatsSentTs?: number; ack?: boolean; ackTs?
 export default function MissoesPessoal() {
   const [items, setItems] = useState<Array<{ month: string; id: string; data: EscalaIndex }>>([]);
   const [statuses, setStatuses] = useState<Record<string, Status>>({});
-  const [detailsOpenKey, setDetailsOpenKey] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string>('');
   const [toastVisible, setToastVisible] = useState<boolean>(false);
   const uid = auth.currentUser?.uid || '';
@@ -41,7 +39,8 @@ export default function MissoesPessoal() {
       setItems(
         list
           .filter((it) => !!it.data?.inicioTs)
-          .sort((a, b) => (a.data.inicioTs || 0) - (b.data.inicioTs || 0))
+          // Ordena do mais recente para o mais antigo
+          .sort((a, b) => (b.data.inicioTs || 0) - (a.data.inicioTs || 0))
       );
       setStatuses(nextStatuses);
     });
@@ -90,59 +89,19 @@ export default function MissoesPessoal() {
                 </div>
                 {(() => {
                   const st = statuses[`${month}/${id}`] || {};
-                  const key = `${month}/${id}`;
                   const ackText = st.ackTs ? new Date(st.ackTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
-                  const whatsText = st.whatsSentTs ? new Date(st.whatsSentTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
                   return (
-                    <div className="flex flex-col items-center gap-1">
-                      <button type="button" className="w-6 h-6" onClick={() => setDetailsOpenKey((prev) => (prev === key ? null : key))} title="Ver detalhes do status" aria-label="Ver detalhes do status">
-                        {st.ack ? (
-                          <StatusAckGiven />
-                        ) : st.whatsSent ? (
-                          <StatusWhatsSent />
-                        ) : (
-                          <StatusWhatsNotSent />
-                        )}
-                      </button>
-                      {ackText ? (
-                        <div className="text-[11px] text-gray-light">{ackText}</div>
-                      ) : whatsText ? (
-                        <div className="text-[11px] text-gray-light">{whatsText}</div>
+                    <div className="flex flex-col items-end gap-1">
+                      {st.ack ? (
+                        <>
+                          <div className="text-xs text-blue-600">Efetivo deu ciente</div>
+                          {ackText ? <div className="text-[11px] text-gray-light">{ackText}</div> : null}
+                        </>
                       ) : null}
                     </div>
                   );
                 })()}
               </div>
-              {detailsOpenKey === `${month}/${id}` && (
-                <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby={`status-title-${month}-${id}`}
-                  className="absolute right-4 top-16 z-10 text-xs text-gray-text bg-white rounded px-3 py-2 border shadow-card w-64"
-                  onKeyDown={(e) => { if (e.key === 'Escape') setDetailsOpenKey(null); }}
-                >
-                  <div id={`status-title-${month}-${id}`} className="font-semibold mb-1">Detalhes do status</div>
-                  <div className="space-y-1">
-                    <div>WhatsApp enviado: {statuses[`${month}/${id}`]?.whatsSent ? 'Sim' : 'Não'}</div>
-                    {statuses[`${month}/${id}`]?.whatsSentTs ? (
-                      <div>
-                        Enviado em: {new Date(statuses[`${month}/${id}`]!.whatsSentTs!).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}
-                      </div>
-                    ) : null}
-                    <div>Ciente: {statuses[`${month}/${id}`]?.ack ? 'Sim' : 'Não'}</div>
-                    {statuses[`${month}/${id}`]?.ackTs ? (
-                      <div>
-                        Ciente em: {new Date(statuses[`${month}/${id}`]!.ackTs!).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="mt-2 flex justify-end">
-                    <button className="text-xs px-2 py-1 border rounded hover:bg-gray-50" onClick={() => setDetailsOpenKey(null)} autoFocus>
-                      Fechar
-                    </button>
-                  </div>
-                </div>
-              )}
               <button
                 className="mt-3 px-3 py-2 border rounded text-sm"
                 onClick={() => confirmarCiente(month, id)}
