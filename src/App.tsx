@@ -16,6 +16,7 @@ import NovaUnidade from './pages/NovaUnidade';
 import GerenciarUnidade from './pages/GerenciarUnidade';
 import Missao from './pages/Missao';
 import NovaMissao from './pages/NovaMissao';
+import MissoesPessoal from './pages/MissoesPessoal';
 
 function App() {
   return (
@@ -139,6 +140,14 @@ function App() {
           element={
             <ProtectedRoute requireUnitAdmin>
               <NovaMissao />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/missoesPessoal"
+          element={
+            <ProtectedRoute>
+              <MissoesPessoal />
             </ProtectedRoute>
           }
         />

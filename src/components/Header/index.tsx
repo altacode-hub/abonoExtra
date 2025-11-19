@@ -227,6 +227,12 @@ export const Header: React.FC<HeaderProps> = ({ date }) => {
                       </svg>
                       <span>Perfil</span>
                     </button>
+                    <button className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-gray" onClick={() => goTo('/missoesPessoal')}>
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </svg>
+                      <span>Missões Pessoal</span>
+                    </button>
                     <button className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-gray" onClick={() => goTo('/unidades')}>
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                         <rect x="3" y="10" width="18" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
