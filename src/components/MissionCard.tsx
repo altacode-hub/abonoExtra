@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ToggleSwitch } from './ToggleSwitch';
 
-interface Mission {
+export interface Mission {
   id: string;
   titulo: string;
   local: string;
@@ -12,6 +12,8 @@ interface Mission {
   disponivel?: boolean;
   referencia?: string;
   inscritoStatus?: 'voluntario' | 'escalado' | string;
+  descricao?: string;
+  turnos?: any;
 }
 
 interface MissionCardProps {

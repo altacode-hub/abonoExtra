@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { db } from '../services/firebase';
 import { ref, set, push, onValue, remove } from 'firebase/database';
-import type { Missao } from '../components/MissionCard';
+import type { Mission } from '../components/MissionCard';
 
 export default function Admin() {
-  const [missoes, setMissoes] = useState<Record<string, Missao>>({});
+  const [missoes, setMissoes] = useState<Record<string, Mission>>({});
   const [titulo, setTitulo] = useState('');
 
   useEffect(() => {
