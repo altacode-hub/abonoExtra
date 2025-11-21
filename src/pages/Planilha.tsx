@@ -4,6 +4,8 @@ import { auth, db } from '../services/firebase';
 import { onValue, ref, get } from 'firebase/database';
 import { isUnitAdmin } from '../services/rbac';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface EfetivoEscalado {
   nome: string;
@@ -93,6 +95,7 @@ export default function Planilha() {
 
   const [efetivoEscalado, setEfetivoEscalado] = useState<EfetivoEscalado[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -176,6 +179,301 @@ export default function Planilha() {
     }
   };
 
+  const gerarPDF = async () => {
+    if (efetivoEscalado.length === 0) {
+      alert('Nenhum dado para gerar PDF');
+      return;
+    }
+
+    setIsGeneratingPDF(true);
+    
+    try {
+      // Criar documento PDF
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      // Configurações de margens e layout
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginLeft = 10;
+      const marginRight = 10;
+      const marginTop = 10;
+      const contentWidth = pageWidth - marginLeft - marginRight;
+      
+      // Largura das colunas do cabeçalho (3 seções)
+      const colWidth = contentWidth / 3;
+      
+      // ===== CABEÇALHO COM 3 COLUNAS =====
+      let currentY = marginTop;
+      
+      // Título principal se existir
+      //if (spreadsheetHeader.titulo) {
+      //  doc.setFontSize(16);
+      //  doc.setFont(undefined, 'bold');
+      //  doc.setTextColor(0, 0, 128); // Azul escuro
+      //  doc.text(spreadsheetHeader.titulo, pageWidth / 2, currentY, { align: 'center' });
+      //  currentY += 10;
+      //}
+      
+      // Altura das caixas do cabeçalho
+      const headerBoxHeight = 30;
+      
+      // Desenhar caixas do cabeçalho
+      // Coluna 1 - Autorização (A-F)
+      doc.setDrawColor(0, 0, 0); // Borda preta
+      doc.setFillColor(255, 255, 255); // Fundo branco
+      doc.rect(marginLeft, currentY, colWidth, headerBoxHeight, 'FD');
+      
+      // Coluna 2 - Brasão/Emblema (G-L)
+      doc.setFillColor(255, 255, 224); // Fundo amarelo claro
+      doc.rect(marginLeft + colWidth, currentY, colWidth, headerBoxHeight, 'FD');
+      
+      // Coluna 3 - Aprovação (M-Q)
+      doc.setFillColor(255, 255, 255); // Fundo branco
+      doc.rect(marginLeft + colWidth * 2, currentY, colWidth, headerBoxHeight, 'FD');
+      
+      // Adicionar textos do cabeçalho
+      doc.setFontSize(11);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(0, 0, 0);
+      
+      // Autorização
+      const authTextY = currentY + 5;
+      doc.text('AUTORIZO:', marginLeft + colWidth / 2, authTextY, { align: 'center' });
+      doc.setFont(undefined, 'normal');
+      doc.text('_________________________', marginLeft + colWidth / 2, authTextY + 10, { align: 'center' });
+      doc.text(spreadsheetHeader.autorizacao?.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth / 2, authTextY + 15, { align: 'center' });
+      doc.text(spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth / 2, authTextY + 20, { align: 'center' });
+      
+      // Brasão/Emblema
+      doc.setFontSize(10);
+      doc.setTextColor(102, 102, 102);
+      doc.text('[BRASÃO/EMBLEMA]', marginLeft + colWidth + colWidth / 2, authTextY + 10, { align: 'center' });
+      if (spreadsheetHeader.imagemUrl) {
+        doc.text('[IMAGEM CONFIGURADA]', marginLeft + colWidth + colWidth / 2, authTextY + 15, { align: 'center' });
+      }
+      
+      // Aprovação
+      if (spreadsheetHeader.aprovacao) {
+        doc.setFontSize(11);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('APROVO:', marginLeft + colWidth * 2 + colWidth / 2, authTextY, { align: 'center' });
+        doc.setFont(undefined, 'normal');
+        doc.text('_________________________', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 10, { align: 'center' });
+        doc.text(spreadsheetHeader.aprovacao.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 15, { align: 'center' });
+        doc.text(spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 20, { align: 'center' });
+      }
+      
+      currentY += headerBoxHeight + 0;
+
+      // Desenhar caixas do Mês e Periodo
+      doc.setFillColor(255, 250, 205); // Amarelo claro
+      doc.rect(marginLeft, currentY, contentWidth, 13, 'FD');
+      
+      // Mês
+      // Opções para formatar como MM/YYYY
+      const optionsMes: Intl.DateTimeFormatOptions = {
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'UTC' // Define o fuso horário como UTC
+      };
+      const periodoMes = new Intl.DateTimeFormat('pt-BR', optionsMes).format(new Date(formData.dataInicial));
+      const periodoMesTexto = `Mês: ${periodoMes}`;
+      doc.setFontSize(11);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(128, 0, 0); // Vermelho escuro
+      doc.text(periodoMesTexto, pageWidth - marginRight - 5, currentY + 5, { align: 'right' });
+      
+      currentY += 5;
+      // Período
+      // Opções para formatar como DD/MM/YYYY
+      const options: Intl.DateTimeFormatOptions = {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'UTC' // Define o fuso horário como UTC
+      };
+      const periodoInicio = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataInicial));
+      const periodoFinal = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataFinal));
+      const periodoTexto = `Período: ${periodoInicio} a ${periodoFinal}`;
+      doc.setFontSize(11);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(128, 0, 0); // Vermelho escuro
+      doc.text(periodoTexto, pageWidth - marginRight - 5, currentY + 5, { align: 'right' });
+      
+      currentY += 8;
+      
+      // ===== TABELA COM DADOS =====
+      const tableData = [];
+      const VALOR_POR_DIA = 204.87;
+      
+      // Processar dados para a tabela
+      efetivoEscalado.forEach(efetivo => {
+        const diasTrabalhados = efetivo.dias.length;
+        const totalValor = diasTrabalhados * VALOR_POR_DIA;
+        
+        // Dividir dias em grupos de 12
+        for (let i = 0; i < efetivo.dias.length; i += 12) {
+          const grupoDias = efetivo.dias.slice(i, i + 12);
+          const qtdDias = grupoDias.length;
+          const valorGrupo = qtdDias * VALOR_POR_DIA;
+          
+          const row = [];
+          row.push(i === 0 ? efetivo.nome : ''); // Nome apenas na primeira linha
+          row.push(''); // CPF - não temos no momento
+          row.push(''); // Matrícula funcional - não temos no momento
+          
+          // Adicionar dias do grupo (máximo 12)
+          for (let j = 0; j < 12; j++) {
+            row.push(j < grupoDias.length ? grupoDias[j] : '');
+          }
+          
+          row.push(qtdDias); // Quantidade
+          row.push(''); // HS - não temos no momento
+          row.push(valorGrupo.toLocaleString('pt-BR', { 
+            style: 'currency', 
+            currency: 'BRL' 
+          })); // Valor formatado
+          
+          tableData.push(row);
+        }
+      });
+      
+      // Adicionar linha de total
+      const totalDias = efetivoEscalado.reduce((sum, efetivo) => sum + efetivo.dias.length, 0);
+      const totalValor = totalDias * VALOR_POR_DIA;
+      
+      const totalRow = [];
+      totalRow.push('TOTAL');
+      totalRow.push('');
+      totalRow.push('');
+      for (let i = 0; i < 12; i++) {
+        totalRow.push('');
+      }
+      totalRow.push(totalDias);
+      totalRow.push('');
+      totalRow.push(totalValor.toLocaleString('pt-BR', { 
+        style: 'currency', 
+        currency: 'BRL' 
+      }));
+      
+      tableData.push(totalRow);
+      
+      // Cabeçalho da tabela
+      const headers = [
+        'Nome',
+        'CPF',
+        'Matrícula\nFuncional',
+        '1º', '2º', '3º', '4º', '5º', '6º', '7º', '8º', '9º', '10º', '11º', '12º',
+        'Qde',
+        'HS',
+        'Valor (R$)'
+      ];
+      
+      // Configurações da tabela
+      autoTable(doc, {
+        head: [headers],
+        body: tableData,
+        startY: currentY + 5,
+        theme: 'grid',
+        styles: {
+          fontSize: 9,
+          cellPadding: 2,
+          fillColor: [240, 255, 240], // Verde claro
+          textColor: [0, 0, 0],
+          lineColor: [0, 0, 0],
+          lineWidth: 0.1
+        },
+        headStyles: {
+          fillColor: [200, 230, 200], // Verde mais escuro para cabeçalho
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        columnStyles: {
+          0: { halign: 'left', fontStyle: 'bold' }, // Nome
+          1: { halign: 'center' }, // CPF
+          2: { halign: 'center' }, // Matrícula
+          3: { halign: 'center' }, // 1º
+          4: { halign: 'center' }, // 2º
+          5: { halign: 'center' }, // 3º
+          6: { halign: 'center' }, // 4º
+          7: { halign: 'center' }, // 5º
+          8: { halign: 'center' }, // 6º
+          9: { halign: 'center' }, // 7º
+          10: { halign: 'center' }, // 8º
+          11: { halign: 'center' }, // 9º
+          12: { halign: 'center' }, // 10º
+          13: { halign: 'center' }, // 11º
+          14: { halign: 'center' }, // 12º
+          15: { halign: 'center', fontStyle: 'bold' }, // Qde
+          16: { halign: 'center' }, // HS
+          17: { halign: 'right', fontStyle: 'bold' } // Valor
+        },
+        alternateRowStyles: {
+          fillColor: [248, 255, 248] // Verde ainda mais claro para linhas alternadas
+        }
+      });
+      
+      // Pegar posição Y após a tabela
+      const finalY = (doc as any).lastAutoTable.finalY || currentY + 50;
+      
+      // ===== RODAPÉ COM ASSINATURAS =====
+      const footerY = finalY + 15;
+      const footerBoxHeight = 20;
+      
+      // Caixa da esquerda - Diretor da Escola
+      doc.setFillColor(255, 255, 255);
+      doc.rect(marginLeft, footerY, colWidth, footerBoxHeight, 'FD');
+      
+      // Caixa da direita - Coordenadora
+      doc.rect(marginLeft + colWidth * 2, footerY, colWidth, footerBoxHeight, 'FD');
+      
+      // Adicionar textos do rodapé
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(0, 0, 0);
+      
+      // Assinatura esquerda
+      const footerTextY = footerY + 5;
+      doc.text('PAULO DAMASCENO COSTA', marginLeft + colWidth / 2, footerTextY, { align: 'center' });
+      doc.text('DIRETOR DA ESCOLA', marginLeft + colWidth / 2, footerTextY + 5, { align: 'center' });
+      doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth / 2, footerTextY + 10, { align: 'center' });
+      
+      // Assinatura direita
+      doc.text('ELIZABETE LIMA SOARES - CAP', marginLeft + colWidth * 2 + colWidth / 2, footerTextY, { align: 'center' });
+      doc.text('COORDENADORA DA SME', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 5, { align: 'center' });
+      doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 10, { align: 'center' });
+      
+      // Informações adicionais
+      const infoY = footerY + footerBoxHeight + 10;
+      doc.setFontSize(9);
+      doc.text(`Planilha gerada em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, marginLeft, infoY);
+      doc.text(`Unidade: ${userUnits.find(u => u.code === formData.unidade)?.titulo || formData.unidade}`, marginLeft, infoY + 5);
+      doc.text(`Total de servidores: ${efetivoEscalado.length}`, marginLeft, infoY + 10);
+      doc.text(`Total de dias trabalhados: ${totalDias}`, marginLeft, infoY + 15);
+      doc.text(`Valor total: ${totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`, marginLeft, infoY + 20);
+      
+      // Número da página
+      doc.setFontSize(8);
+      doc.text('PÁG 1 DE 1', pageWidth - marginRight, pageHeight - 10, { align: 'right' });
+      
+      // Gerar e salvar o PDF
+      const fileName = `Efetivo_Escalado_${formData.unidade}_${formData.dataInicial}_a_${formData.dataFinal}.pdf`;
+      doc.save(fileName);
+      
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('Erro ao gerar PDF. Tente novamente.');
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   const gerarPlanilhaExcel = async () => {
     if (efetivoEscalado.length === 0) {
       alert('Nenhum dado para gerar planilha');
@@ -201,36 +499,76 @@ export default function Planilha() {
       ];
       ws['!cols'] = colWidths;
 
-      // Cabeçalho principal usando dados do banco
-      const header1 = [
-        'AUTORIZOU:',
-        '',
-        '',
-        '',
-        ...Array(12).fill(''),
-        '',
-        ''
-      ];
+      // ===== CABEÇALHO DA PLANILHA COM 3 COLUNAS =====
+      const headerRows: any[][] = [];
       
-      const header2 = [
-        spreadsheetHeader.autorizacao?.nome || 'NOME NÃO CONFIGURADO',
-        '',
-        '',
-        '',
-        ...Array(12).fill(''),
-        '',
-        ''
+      // Configurar largura das colunas para o cabeçalho (3 seções: A-F, G-L, M-Q)
+      const headerColWidths = [
+        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, // Colunas A-F (Autorização)
+        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, // Colunas G-L (Brasão)
+        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }  // Colunas M-Q (Aprovação)
       ];
+      ws['!cols'] = headerColWidths;
+
+      // Linha 1: Título principal (mesclado se existir)
+      if (spreadsheetHeader.titulo) {
+        headerRows.push(Array(17).fill(''));
+        headerRows.push(Array(17).fill(''));
+        headerRows[0][0] = spreadsheetHeader.titulo;
+      }
+
+      // Linhas do cabeçalho três colunas (Autorização | Brasão | Aprovação)
+      const linhasAutorizacao = 4;
+      const linhasAprovacao = 4;
       
-      const header3 = [
-        spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO',
-        '',
-        '',
-        '',
-        ...Array(12).fill(''),
-        '',
-        ''
-      ];
+      for (let i = 0; i < Math.max(linhasAutorizacao, linhasAprovacao); i++) {
+        const row = Array(17).fill('');
+        
+        // Coluna da Esquerda - Autorização (A-F)
+        if (i === 0) {
+          row[0] = 'AUTORIZO:'; // A1
+        } else if (i === 1) {
+          row[0] = '_________________________'; // Linha para assinatura
+        } else if (i === 2) {
+          row[0] = spreadsheetHeader.autorizacao?.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO';
+        } else if (i === 3) {
+          row[0] = spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO';
+        }
+        
+        // Coluna do Centro - Brasão/Emblema (G-L)
+        if (i === 1) {
+          row[6] = '[BRASÃO/EMBLEMA]'; // Espaço reservado para o brasão
+        } else if (i === 2 && spreadsheetHeader.imagemUrl) {
+          row[6] = '[IMAGEM CONFIGURADA]'; // Indica que há imagem configurada
+        }
+        
+        // Coluna da Direita - Aprovação (M-Q)
+        if (spreadsheetHeader.aprovacao) {
+          if (i === 0) {
+            row[12] = 'APROVO:'; // M1
+          } else if (i === 1) {
+            row[12] = '_________________________'; // Linha para assinatura
+          } else if (i === 2) {
+            row[12] = spreadsheetHeader.aprovacao.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO';
+          } else if (i === 3) {
+            row[12] = spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO';
+          }
+        }
+        
+        headerRows.push(row);
+      }
+
+      // Linha vazia após o cabeçalho
+      headerRows.push(Array(17).fill(''));
+      
+      // Linha do período (mesclada)
+      const periodoTexto = `Período: ${formData.dataInicial} a ${formData.dataFinal}`;
+      const periodoRowData = Array(17).fill('');
+      periodoRowData[0] = periodoTexto;
+      headerRows.push(periodoRowData);
+      
+      // Linha vazia antes da tabela
+      headerRows.push(Array(17).fill(''));
 
       // Cabeçalho da tabela com duas linhas conforme imagem (17 colunas total)
       const headerRow1 = [
@@ -298,49 +636,78 @@ export default function Planilha() {
       });
       allRows.push(totalRow);
 
-      // Combinar todos os dados
+      // ===== RODAPÉ DA PLANILHA =====
+      const footerRows: any[][] = [];
+      footerRows.push(['']); // Linha vazia antes do rodapé
+      
+      // Informações adicionais no rodapé
+      const dataGeracao = new Date().toLocaleDateString('pt-BR');
+      const horaGeracao = new Date().toLocaleTimeString('pt-BR');
+      
+      footerRows.push([`Planilha gerada em ${dataGeracao} às ${horaGeracao}`]);
+      footerRows.push([`Unidade: ${userUnits.find(u => u.code === formData.unidade)?.titulo || formData.unidade}`]);
+      footerRows.push([`Total de servidores: ${efetivoEscalado.length}`]);
+      footerRows.push([`Total de dias trabalhados: ${totalDias}`]);
+      footerRows.push([`Valor total: ${totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`]);
+
+      // Combinar todos os dados: Cabeçalho + Tabela + Rodapé
       const allData = [
-        header1,
-        header2,
-        header3,
-        Array(16).fill(''), // Linha vazia
-        // Adicionar seção de aprovação se configurada (17 colunas)
-        ...(spreadsheetHeader.aprovacao ? [
-          ['APROVO:', '', '', ...Array(12).fill(''), '', '', ''],
-          [spreadsheetHeader.aprovacao.nome || 'NOME NÃO CONFIGURADO', '', '', ...Array(12).fill(''), '', '', ''],
-          [spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO', '', '', ...Array(12).fill(''), '', '', ''],
-          Array(17).fill('') // Linha vazia (17 colunas)
-        ] : []),
+        ...headerRows,
         headerRow1,
         headerRow2,
-        ...allRows
+        ...allRows,
+        ...footerRows
       ];
 
       // Adicionar dados ao worksheet
       XLSX.utils.sheet_add_aoa(ws, allData, { origin: 'A1' });
 
-      // Mesclar células do cabeçalho
+      // ===== CONFIGURAÇÃO DE MESCLAGEM DE CÉLULAS PARA 3 COLUNAS =====
       if (!ws['!merges']) ws['!merges'] = [];
       
-      // Mesclar células do cabeçalho principal (autorização) - 17 colunas (0-16)
-      ws['!merges'].push(
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 16 } }, // AUTORIZOU: mesclado
-        { s: { r: 1, c: 0 }, e: { r: 1, c: 16 } }, // Nome autorizador mesclado
-        { s: { r: 2, c: 0 }, e: { r: 2, c: 16 } }  // Cargo autorizador mesclado
-      );
-
-      // Mesclar células da seção de aprovação se existir
-      if (spreadsheetHeader.aprovacao) {
-        const offset = 4; // Offset devido às linhas adicionais
+      const ultimaLinhaHeader = headerRows.length - 1;
+      const linhaPeriodo = ultimaLinhaHeader - 1;
+      
+      // Mesclar células do título principal (se existir) - ocupa todas as colunas
+      if (spreadsheetHeader.titulo) {
         ws['!merges'].push(
-          { s: { r: 0 + offset, c: 0 }, e: { r: 0 + offset, c: 16 } }, // APROVO: mesclado
-          { s: { r: 1 + offset, c: 0 }, e: { r: 1 + offset, c: 16 } }, // Nome aprovador mesclado
-          { s: { r: 2 + offset, c: 0 }, e: { r: 2 + offset, c: 16 } }  // Cargo aprovador mesclado
+          { s: { r: 0, c: 0 }, e: { r: 1, c: 16 } } // Título mesclado (2 linhas)
         );
       }
+      
+      // Mesclar seções do cabeçalho em 3 colunas
+      const offsetTitulo = spreadsheetHeader.titulo ? 2 : 0;
+      
+      // Seção Autorização (colunas A-F)
+      for (let i = 0; i < 4; i++) {
+        ws['!merges'].push(
+          { s: { r: offsetTitulo + i, c: 0 }, e: { r: offsetTitulo + i, c: 5 } } // A-F
+        );
+      }
+      
+      // Seção Brasão/Emblema (colunas G-L) - espaço reservado
+      for (let i = 0; i < 4; i++) {
+        ws['!merges'].push(
+          { s: { r: offsetTitulo + i, c: 6 }, e: { r: offsetTitulo + i, c: 11 } } // G-L
+        );
+      }
+      
+      // Seção Aprovação (colunas M-Q)
+      if (spreadsheetHeader.aprovacao) {
+        for (let i = 0; i < 4; i++) {
+          ws['!merges'].push(
+            { s: { r: offsetTitulo + i, c: 12 }, e: { r: offsetTitulo + i, c: 16 } } // M-Q
+          );
+        }
+      }
+      
+      // Mesclar período
+      ws['!merges'].push(
+        { s: { r: linhaPeriodo, c: 0 }, e: { r: linhaPeriodo, c: 16 } }
+      );
 
       // Mesclar células do cabeçalho da tabela (estrutura de duas linhas)
-      const tableStartRow = spreadsheetHeader.aprovacao ? 8 : 4;
+      const tableStartRow = ultimaLinhaHeader + 1;
       
       // Mesclar colunas que ocupam duas linhas (Nome, CPF, Matrícula funcional, Qtd, Valor)
       ws['!merges'].push(
@@ -355,6 +722,14 @@ export default function Planilha() {
       ws['!merges'].push(
         { s: { r: tableStartRow, c: 3 }, e: { r: tableStartRow, c: 14 } } // DATAS DAS JORNADAS
       );
+
+      // Mesclar rodapé (todas as linhas do rodapé)
+      const footerStartRow = tableStartRow + allRows.length + 2; // +2 por causa das 2 linhas do cabeçalho da tabela
+      for (let i = 0; i < footerRows.length; i++) {
+        ws['!merges'].push(
+          { s: { r: footerStartRow + i, c: 0 }, e: { r: footerStartRow + i, c: 16 } }
+        );
+      }
 
       // Estilos
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
@@ -375,16 +750,90 @@ export default function Planilha() {
         }
       }
       
-      // Aplicar estilos ao cabeçalho principal (autorização e aprovação) - 17 colunas
-      const headerEndRow = spreadsheetHeader.aprovacao ? 6 : 2;
-      for (let R = 0; R <= headerEndRow; R++) {
-        for (let C = 0; C <= 16; C++) {
+      // ===== ESTILOS =====
+      
+      // ===== ESTILOS PARA O LAYOUT COM 3 COLUNAS =====
+      
+      // Estilos do cabeçalho
+      const tituloRow = 0;
+      const headerStartRow = spreadsheetHeader.titulo ? 2 : 0;
+      const periodoRow = headerStartRow + 5; // 4 linhas de cabeçalho + 1 linha vazia
+      
+      // Estilo do título
+      if (spreadsheetHeader.titulo) {
+        const tituloCell = XLSX.utils.encode_cell({ r: tituloRow, c: 0 });
+        if (ws[tituloCell]) {
+          ws[tituloCell].s = {
+            ...ws[tituloCell].s,
+            font: { bold: true, sz: 16, color: { rgb: '000080' } },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { fgColor: { rgb: 'E6F3FF' } }
+          };
+        }
+      }
+      
+      // Estilo das 3 colunas do cabeçalho
+      for (let R = headerStartRow; R < headerStartRow + 4; R++) {
+        // Coluna da Esquerda - Autorização (A-F) - Fundo branco
+        for (let C = 0; C <= 5; C++) {
           const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
+          if (ws[cellRef] && ws[cellRef].v) {
+            ws[cellRef].s = {
+              ...ws[cellRef].s,
+              font: { 
+                bold: R === headerStartRow ? true : false, 
+                sz: 11, 
+                color: { rgb: '000000' } 
+              },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              fill: { fgColor: { rgb: 'FFFFFF' } } // Fundo branco
+            };
+          }
+        }
+        
+        // Coluna do Centro - Brasão (G-L) - Fundo amarelo claro
+        for (let C = 6; C <= 11; C++) {
+          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+          if (ws[cellRef] && ws[cellRef].v) {
+            ws[cellRef].s = {
+              ...ws[cellRef].s,
+              font: { sz: 10, color: { rgb: '666666' } },
+              alignment: { horizontal: 'center', vertical: 'center' },
+              fill: { fgColor: { rgb: 'FFFFE0' } } // Fundo amarelo claro
+            };
+          }
+        }
+        
+        // Coluna da Direita - Aprovação (M-Q) - Fundo branco
+        if (spreadsheetHeader.aprovacao) {
+          for (let C = 12; C <= 16; C++) {
+            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+            if (ws[cellRef] && ws[cellRef].v) {
+              ws[cellRef].s = {
+                ...ws[cellRef].s,
+                font: { 
+                  bold: R === headerStartRow ? true : false, 
+                  sz: 11, 
+                  color: { rgb: '000000' } 
+                },
+                alignment: { horizontal: 'center', vertical: 'center' },
+                fill: { fgColor: { rgb: 'FFFFFF' } } // Fundo branco
+              };
+            }
+          }
+        }
+      }
+      
+      // Estilo da linha de período
+      const periodoRowIndex = headerStartRow + 5; // 4 linhas de cabeçalho + 1 linha vazia
+      for (let C = 0; C <= 16; C++) {
+        const cellRef = XLSX.utils.encode_cell({ r: periodoRowIndex, c: C });
+        if (ws[cellRef]) {
           ws[cellRef].s = {
             ...ws[cellRef].s,
-            font: { bold: true, sz: 12 },
-            alignment: { horizontal: 'center', vertical: 'center' }
+            font: { bold: true, sz: 11, color: { rgb: '800000' } },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { fgColor: { rgb: 'FFFACD' } }
           };
         }
       }
@@ -443,7 +892,7 @@ export default function Planilha() {
 
       // Estilo para dados das linhas (azul e sublinhado para nomes)
       const dataStartRow = tableStartRow + 2;
-      for (let R = dataStartRow; R <= range.e.r; R++) {
+      for (let R = dataStartRow; R < footerStartRow; R++) {
         // Nome (coluna 0) - azul e sublinhado
         const nomeCellRef = XLSX.utils.encode_cell({ r: R, c: 0 });
         if (ws[nomeCellRef] && ws[nomeCellRef].v) {
@@ -461,6 +910,27 @@ export default function Planilha() {
             ws[cellRef].s = {
               ...ws[cellRef].s,
               alignment: { horizontal: 'center', vertical: 'center' }
+            };
+          }
+        }
+      }
+
+      // Estilo do rodapé
+      for (let R = footerStartRow; R <= range.e.r; R++) {
+        for (let C = 0; C <= 16; C++) {
+          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+          if (ws[cellRef]) {
+            ws[cellRef].s = {
+              ...ws[cellRef].s,
+              font: { sz: 10, color: { rgb: '555555' } },
+              alignment: { horizontal: 'left', vertical: 'center' },
+              fill: { fgColor: { rgb: 'F8F8F8' } },
+              border: {
+                top: { style: 'thin', color: { rgb: 'DDDDDD' } },
+                bottom: { style: 'thin', color: { rgb: 'DDDDDD' } },
+                left: { style: 'none' },
+                right: { style: 'none' }
+              }
             };
           }
         }
@@ -569,13 +1039,22 @@ export default function Planilha() {
           <section className="bg-white border rounded-lg p-6 shadow-card mt-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-text">Efetivo Escalado</h3>
-              <button
-                onClick={gerarPlanilhaExcel}
-                disabled={isGenerating}
-                className="px-4 py-2 bg-green-600 text-white font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isGenerating ? 'Gerando...' : 'Gerar Planilha'}
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={gerarPDF}
+                  disabled={isGeneratingPDF}
+                  className="px-4 py-2 bg-red-600 text-white font-medium rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingPDF ? 'Gerando PDF...' : 'Gerar PDF'}
+                </button>
+                <button
+                  onClick={gerarPlanilhaExcel}
+                  disabled={isGenerating}
+                  className="px-4 py-2 bg-green-600 text-white font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGenerating ? 'Gerando...' : 'Gerar Planilha'}
+                </button>
+              </div>
             </div>
             <div className="space-y-3">
               {efetivoEscalado.map((efetivo, index) => {
