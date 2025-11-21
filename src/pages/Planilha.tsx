@@ -286,8 +286,8 @@ export default function Planilha() {
       currentY += headerBoxHeight + 0;
 
       // Desenhar caixas do Mês e Periodo
-      doc.setFillColor(255, 250, 205); // Amarelo claro
-      doc.rect(marginLeft, currentY, contentWidth, 13, 'FD');
+      //doc.setFillColor(255, 255, 224); // Amarelo claro
+      //doc.rect(marginLeft, currentY, contentWidth, 13, 'FD');
       
       // Mês
       // Opções para formatar como MM/YYYY
@@ -378,20 +378,45 @@ export default function Planilha() {
       
       tableData.push(totalRow);
       
-      // Cabeçalho da tabela
-      const headers = [
-        'Nome',
-        'CPF',
-        'Matrícula\nFuncional',
-        '1º', '2º', '3º', '4º', '5º', '6º', '7º', '8º', '9º', '10º', '11º', '12º',
-        'Qde',
-        'HS',
-        'Valor (R$)'
+      // Cabeçalho da tabela com duas linhas
+      const headerRow1 = [
+        { content: 'Nome', rowSpan: 2 },
+        { content: 'CPF', rowSpan: 2 },
+        { content: 'Matrícula\nFuncional', rowSpan: 2 },
+        { content: 'DATAS DAS JORNADAS', colSpan: 12 },
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: '', colSpan: 0 }, // Continuação do merge
+        { content: 'Qde', rowSpan: 2 },
+        { content: 'Valor (R$)', rowSpan: 2 }
+      ];
+      
+      const headerRow2 = [
+        { content: '1º' },
+        { content: '2º' },
+        { content: '3º' },
+        { content: '4º' },
+        { content: '5º' },
+        { content: '6º' },
+        { content: '7º' },
+        { content: '8º' },
+        { content: '9º' },
+        { content: '10º' },
+        { content: '11º' },
+        { content: '12º' }
       ];
       
       // Configurações da tabela
       autoTable(doc, {
-        head: [headers],
+        head: [headerRow1, headerRow2],
         body: tableData,
         startY: currentY + 5,
         theme: 'grid',
