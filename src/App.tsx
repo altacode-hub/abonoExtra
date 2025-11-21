@@ -17,6 +17,7 @@ import GerenciarUnidade from './pages/GerenciarUnidade';
 import Missao from './pages/Missao';
 import NovaMissao from './pages/NovaMissao';
 import MissoesPessoal from './pages/MissoesPessoal';
+import CabecalhoPlanilha from './pages/CabecalhoPlanilha';
 
 function App() {
   return (
@@ -108,6 +109,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Configuracao />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/configuracao/cabecalho-planilha"
+          element={
+            <ProtectedRoute>
+              <CabecalhoPlanilha />
             </ProtectedRoute>
           }
         />

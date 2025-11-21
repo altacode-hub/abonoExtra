@@ -16,7 +16,7 @@ describe('MissionCard toggle', () => {
       inscrito: false,
     };
 
-    const onToggle = vi.fn();
+    const onToggle = jest.fn();
     render(<MissionCard mission={mission} onToggle={onToggle} />);
 
     const toggleBtn = screen.getByRole('button');
