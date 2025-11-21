@@ -36,30 +36,63 @@ export const parseHorarioToISO = (horario?: string, dateStr?: string) => {
   return { inicio, fim, inicioTs, fimTs };
 };
 
-export type EfetivoEntry = { ng: string; rg: string; funcao?: string };
+export type EfetivoEntry = { 
+  ng: string;        // Nome de guerra
+  rg: string;        // RG
+  nomeCompleto?: string;  // Nome completo
+  cpf?: string;      // CPF
+  matriculaFuncional?: string; // Matrícula funcional (MF)
+  funcao?: string;   // Função
+};
 
 export const buildEfetivo = (
   selected: Record<string, boolean>,
   volunteersMap: Record<string, any>,
   extraAdditions: Record<string, { nome?: string; email?: string }>,
-  profiles: Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; rg?: string }>,
+  profiles: Record<string, { 
+    nomeGuerra?: string; 
+    nomeCompleto?: string; 
+    email?: string; 
+    rg?: string;
+    cpf?: string;
+    matriculaFuncional?: string;
+    mf?: string;
+  }>,
   funcoes?: Record<string, string>
 ) => {
   const efetivo: Record<string, EfetivoEntry> = {};
   Object.entries(volunteersMap).forEach(([uid, e]) => {
     if (selected[uid]) {
-      const ng = profiles[uid]?.nomeGuerra || (e as any)?.nome || uid;
-      const rg = profiles[uid]?.rg || '';
+      const profile = profiles[uid] || {};
+      const ng = profile.nomeGuerra || (e as any)?.nome || uid;
+      const rg = profile.rg || '';
+      const nomeCompleto = profile.nomeCompleto || '';
+      const cpf = profile.cpf || '';
+      const matriculaFuncional = profile.matriculaFuncional || profile.mf || '';
       const funcao = (funcoes && funcoes[uid]) ? funcoes[uid] : undefined;
-      const entry: EfetivoEntry = { ng, rg };
+      
+      const entry: EfetivoEntry = { 
+        ng, 
+        rg,
+        nomeCompleto,
+        cpf,
+        matriculaFuncional
+      };
       if (funcao !== undefined) entry.funcao = funcao;
       efetivo[uid] = entry;
     }
   });
   Object.entries(extraAdditions).forEach(([uid, e]) => {
+    const profile = profiles[uid] || {};
     const ng = e.nome || uid;
     const funcao = (funcoes && funcoes[uid]) ? funcoes[uid] : undefined;
-    const entry: EfetivoEntry = { ng, rg: '' };
+    const entry: EfetivoEntry = { 
+      ng, 
+      rg: profile.rg || '',
+      nomeCompleto: profile.nomeCompleto || '',
+      cpf: profile.cpf || '',
+      matriculaFuncional: profile.matriculaFuncional || profile.mf || ''
+    };
     if (funcao !== undefined) entry.funcao = funcao;
     efetivo[uid] = entry;
   });

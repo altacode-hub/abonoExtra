@@ -9,6 +9,9 @@ import autoTable from 'jspdf-autotable';
 
 interface EfetivoEscalado {
   nome: string;
+  nomeCompleto?: string;
+  cpf?: string;
+  matriculaFuncional?: string;
   dias: string[];
 }
 
@@ -121,7 +124,7 @@ export default function Planilha() {
     try {
       const inicio = new Date(formData.dataInicial);
       const fim = new Date(formData.dataFinal);
-      const efetivoMap = new Map<string, string[]>();
+      const efetivoMap = new Map<string, { nomeCompleto?: string; cpf?: string; matriculaFuncional?: string; dias: string[] }>();
 
       // Buscar escalas para cada mês no período
       let currentDate = new Date(inicio);
@@ -144,10 +147,19 @@ export default function Planilha() {
               if (escalaData.efetivo) {
                 Object.entries(escalaData.efetivo).forEach(([uid, efetivo]: [string, any]) => {
                   const nome = efetivo.ng || 'Nome não informado';
+                  const existing = efetivoMap.get(nome) || { dias: [] };
+                  
+                  // Atualiza ou cria novo registro com dados completos
                   if (!efetivoMap.has(nome)) {
-                    efetivoMap.set(nome, []);
+                    efetivoMap.set(nome, {
+                      nomeCompleto: efetivo.nomeCompleto || '',
+                      cpf: efetivo.cpf || '',
+                      matriculaFuncional: efetivo.matriculaFuncional || '',
+                      dias: []
+                    });
                   }
-                  efetivoMap.get(nome)?.push(diaMes);
+                  
+                  efetivoMap.get(nome)?.dias.push(diaMes);
                 });
               }
             }
@@ -160,9 +172,12 @@ export default function Planilha() {
 
       // Converte Map para array e ordena por nome
       const efetivoArray: EfetivoEscalado[] = Array.from(efetivoMap.entries())
-        .map(([nome, dias]) => ({
+        .map(([nome, dados]) => ({
           nome,
-          dias: [...new Set(dias)].sort((a, b) => {
+          nomeCompleto: dados.nomeCompleto,
+          cpf: dados.cpf,
+          matriculaFuncional: dados.matriculaFuncional,
+          dias: [...new Set(dados.dias)].sort((a, b) => {
             // Ordena por data (DD/MM)
             const [diaA, mesA] = a.split('/').map(Number);
             const [diaB, mesB] = b.split('/').map(Number);
@@ -323,9 +338,9 @@ export default function Planilha() {
           const valorGrupo = qtdDias * VALOR_POR_DIA;
           
           const row = [];
-          row.push(i === 0 ? efetivo.nome : ''); // Nome apenas na primeira linha
-          row.push(''); // CPF - não temos no momento
-          row.push(''); // Matrícula funcional - não temos no momento
+          row.push(i === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''); // Nome completo apenas na primeira linha
+          row.push(i === 0 ? (efetivo.cpf || '') : ''); // CPF apenas na primeira linha
+          row.push(i === 0 ? (efetivo.matriculaFuncional || '') : ''); // Matrícula funcional apenas na primeira linha
           
           // Adicionar dias do grupo (máximo 12)
           for (let j = 0; j < 12; j++) {
@@ -604,9 +619,9 @@ export default function Planilha() {
           const valorGrupo = qtdDias * VALOR_POR_DIA;
           
           const row = Array(17).fill(''); // 3 colunas iniciais + 12 dias + qtd + valor (17 total)
-          row[0] = i === 0 ? efetivo.nome : ''; // Nome apenas na primeira linha
-          row[1] = ''; // CPF - não temos no momento
-          row[2] = ''; // Matrícula funcional - não temos no momento
+          row[0] = i === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''; // Nome completo apenas na primeira linha
+          row[1] = i === 0 ? (efetivo.cpf || '') : ''; // CPF apenas na primeira linha
+          row[2] = i === 0 ? (efetivo.matriculaFuncional || '') : ''; // Matrícula funcional apenas na primeira linha
           
           // Preencher dias do grupo
           grupoDias.forEach((dia, index) => {
@@ -1070,7 +1085,12 @@ export default function Planilha() {
                     {linhas.map((linhaDias, linhaIndex) => (
                       <div key={linhaIndex} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="font-medium text-gray-text min-w-[150px]">
-                          {linhaIndex === 0 ? efetivo.nome : ''}
+                          {linhaIndex === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''}
+                          {linhaIndex === 0 && efetivo.nomeCompleto && efetivo.nomeCompleto !== efetivo.nome && (
+                            <div className="text-xs text-gray-500 font-normal">
+                              ({efetivo.nome})
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {linhaDias.map((dia, diaIndex) => (

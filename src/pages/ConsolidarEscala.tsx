@@ -43,7 +43,16 @@ export default function ConsolidarEscala() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Record<string, { nome?: string; email?: string }>>({});
   const [hasClickedSearch, setHasClickedSearch] = useState(false);
-  const [profiles, setProfiles] = useState<Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }>>({});
+  const [profiles, setProfiles] = useState<Record<string, { 
+    nomeGuerra?: string; 
+    nomeCompleto?: string; 
+    email?: string; 
+    phone?: string;
+    rg?: string;
+    cpf?: string;
+    matriculaFuncional?: string;
+    mf?: string;
+  }>>({});
   const [existingEscalas, setExistingEscalas] = useState<Set<string>>(new Set());
   const [missionForm, setMissionForm] = useState<{ titulo: string; referencia?: string; local?: string; tipo?: string; horario?: string }>({
     titulo: '',
@@ -276,7 +285,15 @@ export default function ConsolidarEscala() {
     }
     let cancelled = false;
     (async () => {
-      const entries: Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }> = {};
+      const entries: Record<string, { 
+        nomeGuerra?: string; 
+        nomeCompleto?: string; 
+        email?: string; 
+        phone?: string;
+        rg?: string;
+        cpf?: string;
+        matriculaFuncional?: string;
+      }> = {};
       await Promise.all(
         uids.map(async (uid) => {
           try {
@@ -286,7 +303,15 @@ export default function ConsolidarEscala() {
             const digits = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '') : '';
             // Garante formato E.164 BR (prefixo 55)
             const phone = digits ? (digits.startsWith('55') ? digits : `55${digits}`) : '';
-            entries[uid] = { nomeGuerra: p?.nomeGuerra, nomeCompleto: p?.nomeCompleto, email: p?.email, phone };
+            entries[uid] = { 
+              nomeGuerra: p?.nomeGuerra, 
+              nomeCompleto: p?.nomeCompleto, 
+              email: p?.email, 
+              phone,
+              rg: p?.rg,
+              cpf: p?.cpf,
+              matriculaFuncional: p?.matriculaFuncional || p?.mf || '',
+            };
           } catch {
             // ignore erros de permissão
           }
