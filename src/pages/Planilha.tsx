@@ -6,6 +6,8 @@ import { isUnitAdmin } from '../services/rbac';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getStorage, ref as storageRef, getDownloadURL, getBytes, getMetadata } from 'firebase/storage';
+import { borderBottomStyle, borderLeftStyle } from 'html2canvas/dist/types/css/property-descriptors/border-style';
 
 interface EfetivoEscalado {
   nome: string;
@@ -194,7 +196,114 @@ export default function Planilha() {
     }
   };
 
-  const gerarPDF = async () => {
+  // Função auxiliar para desenhar o cabeçalho em cada página
+  const drawHeader = (doc: jsPDF, pageWidth: number, marginLeft: number, marginRight: number, marginTop: number, currentPage: number, totalPages: number, headerImage?: { imgEl?: HTMLImageElement; dataUrl?: string; format: 'PNG' | 'JPEG' }) => {
+    const contentWidth = pageWidth - marginLeft - marginRight;
+    const colWidth = contentWidth / 3;
+    let currentY = marginTop;
+    
+    // Altura das caixas do cabeçalho
+    const headerBoxHeight = 30;
+    
+    // Desenhar caixas do cabeçalho
+    // Coluna 1 - Autorização (A-F)
+    doc.setDrawColor(0, 0, 0); // Borda preta
+    doc.setFillColor(255, 255, 255); // Fundo branco
+    doc.rect(marginLeft, currentY, colWidth, headerBoxHeight, 'FD');
+    
+    // Coluna 2 - Brasão/Emblema (G-L)
+    doc.setFillColor(255, 255, 255); // Fundo branco
+    doc.rect(marginLeft + colWidth, currentY, colWidth, headerBoxHeight, 'FD');
+    
+    // Coluna 3 - Aprovação (M-Q)
+    doc.setFillColor(255, 255, 255); // Fundo branco
+    doc.rect(marginLeft + colWidth * 2, currentY, colWidth, headerBoxHeight, 'FD');
+    
+    // Adicionar textos do cabeçalho
+    // Coluna 1 - Autorização
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'bold');
+    doc.text('AUTORIZO:', marginLeft + colWidth/2, currentY + 5, { align: 'center' });
+    doc.text('________________________________', marginLeft + colWidth/2, currentY + 17, { align: 'center' });
+    doc.text(spreadsheetHeader.autorizacao?.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth/2, currentY + 22, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+    doc.text(spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth/2, currentY + 28, { align: 'center' });
+    
+    if (headerImage?.imgEl || headerImage?.dataUrl) {
+      const imgW = 22;
+      const imgH = 22;
+      const imgX = marginLeft + colWidth + (colWidth - imgW) / 2;
+      const imgY = currentY + (headerBoxHeight - imgH) / 2;
+      console.log('[PDF] drawHeader: adicionando imagem', { fonte: headerImage.imgEl ? 'imgEl' : 'dataUrl', format: headerImage.format, pos: { imgX, imgY, imgW, imgH } });
+      doc.addImage((headerImage.imgEl ?? headerImage.dataUrl) as any, headerImage.format, imgX, imgY, imgW, imgH);
+    } else {
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      doc.text('[BRASÃO/EMBLEMA]', marginLeft + colWidth + colWidth/2, currentY + 15, { align: 'center' });
+    }
+    
+    // Coluna 3 - Aprovação
+    if (spreadsheetHeader.aprovacao) {
+      doc.setFontSize(10);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont(undefined, 'bold');
+      doc.text('APROVO:', marginLeft + colWidth * 2 + colWidth/2, currentY + 5, { align: 'center' });
+      doc.text('_________________________', marginLeft + colWidth * 2 + colWidth/2, currentY + 17, { align: 'center' });
+      doc.text(spreadsheetHeader.aprovacao.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth/2, currentY + 22, { align: 'center' });
+      doc.setFont(undefined, 'normal');
+      doc.text(spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth/2, currentY + 28, { align: 'center' });
+    }
+    
+    return currentY + headerBoxHeight;
+  };
+
+  // Função auxiliar para desenhar o rodapé em cada página
+  const drawFooter = (doc: jsPDF, pageWidth: number, pageHeight: number, marginLeft: number, marginRight: number, currentPage: number, totalPages: number, totalDias: number, totalValor: number) => {
+    const contentWidth = pageWidth - marginLeft - marginRight;
+    const colWidth = contentWidth / 3;
+        
+    // ===== INDICADOR DE PÁGINA =====
+    // Adicionar texto do indicador de página
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'bold');
+    doc.text(`PÁGINA ${currentPage} DE ${totalPages}`, marginLeft + colWidth + colWidth/2, pageHeight - 10, { align: 'center' });
+    
+    // ===== RODAPÉ COM ASSINATURAS =====
+    const footerY = pageHeight - 40;
+    const footerBoxHeight = 30;
+    
+    // Caixa da esquerda - Diretor da Escola
+    doc.setFillColor(255, 255, 255);
+    doc.rect(marginLeft, footerY, colWidth, footerBoxHeight, 'FD');
+    
+    // Caixa da direita - Coordenadora
+    doc.rect(marginLeft + colWidth * 2, footerY, colWidth, footerBoxHeight, 'FD');
+    
+    // Adicionar textos do rodapé
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    
+    // Assinatura esquerda
+    const footerTextY = footerY + 20;
+    doc.text('________________________________', marginLeft + colWidth/2, footerTextY - 5, { align: 'center' });
+    doc.setFont(undefined, 'bold');
+    doc.text('PAULO DAMASCENO COSTA', marginLeft + colWidth / 2, footerTextY, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+    doc.text('DIRETOR DA ESCOLA', marginLeft + colWidth / 2, footerTextY + 4, { align: 'center' });
+    doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth / 2, footerTextY + 8, { align: 'center' });
+    
+    // Assinatura direita
+    doc.text('________________________________', marginLeft + colWidth * 2 + colWidth/2, footerTextY - 5, { align: 'center' });
+    doc.setFont(undefined, 'bold');
+    doc.text('ELIZABETE LIMA SOARES - CAP', marginLeft + colWidth * 2 + colWidth / 2, footerTextY, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+    doc.text('COORDENADORA DA SME', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 4, { align: 'center' });
+    doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 8, { align: 'center' });
+  };
+
+  const generatePDF = async () => {
     if (efetivoEscalado.length === 0) {
       alert('Nenhum dado para gerar PDF');
       return;
@@ -217,112 +326,69 @@ export default function Planilha() {
       const marginRight = 10;
       const marginTop = 10;
       const contentWidth = pageWidth - marginLeft - marginRight;
-      
-      // Largura das colunas do cabeçalho (3 seções)
-      const colWidth = contentWidth / 3;
-      
-      // ===== CABEÇALHO COM 3 COLUNAS =====
-      let currentY = marginTop;
-      
-      // Título principal se existir
-      //if (spreadsheetHeader.titulo) {
-      //  doc.setFontSize(16);
-      //  doc.setFont(undefined, 'bold');
-      //  doc.setTextColor(0, 0, 128); // Azul escuro
-      //  doc.text(spreadsheetHeader.titulo, pageWidth / 2, currentY, { align: 'center' });
-      //  currentY += 10;
-      //}
-      
-      // Altura das caixas do cabeçalho
-      const headerBoxHeight = 30;
-      
-      // Desenhar caixas do cabeçalho
-      // Coluna 1 - Autorização (A-F)
-      doc.setDrawColor(0, 0, 0); // Borda preta
-      doc.setFillColor(255, 255, 255); // Fundo branco
-      doc.rect(marginLeft, currentY, colWidth, headerBoxHeight, 'FD');
-      
-      // Coluna 2 - Brasão/Emblema (G-L)
-      doc.setFillColor(255, 255, 224); // Fundo amarelo claro
-      doc.rect(marginLeft + colWidth, currentY, colWidth, headerBoxHeight, 'FD');
-      
-      // Coluna 3 - Aprovação (M-Q)
-      doc.setFillColor(255, 255, 255); // Fundo branco
-      doc.rect(marginLeft + colWidth * 2, currentY, colWidth, headerBoxHeight, 'FD');
-      
-      // Adicionar textos do cabeçalho
-      doc.setFontSize(11);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(0, 0, 0);
-      
-      // Autorização
-      const authTextY = currentY + 5;
-      doc.text('AUTORIZO:', marginLeft + colWidth / 2, authTextY, { align: 'center' });
-      doc.setFont(undefined, 'normal');
-      doc.text('_________________________', marginLeft + colWidth / 2, authTextY + 10, { align: 'center' });
-      doc.text(spreadsheetHeader.autorizacao?.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth / 2, authTextY + 15, { align: 'center' });
-      doc.text(spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth / 2, authTextY + 20, { align: 'center' });
-      
-      // Brasão/Emblema
-      doc.setFontSize(10);
-      doc.setTextColor(102, 102, 102);
-      doc.text('[BRASÃO/EMBLEMA]', marginLeft + colWidth + colWidth / 2, authTextY + 10, { align: 'center' });
+      console.log('[PDF] Iniciando resolução da imagem do cabeçalho', spreadsheetHeader.imagemUrl);
+      let headerImageData: { imgEl?: HTMLImageElement; dataUrl?: string; format: 'PNG' | 'JPEG' } | undefined;
       if (spreadsheetHeader.imagemUrl) {
-        doc.text('[IMAGEM CONFIGURADA]', marginLeft + colWidth + colWidth / 2, authTextY + 15, { align: 'center' });
-      }
-      
-      // Aprovação
-      if (spreadsheetHeader.aprovacao) {
-        doc.setFontSize(11);
-        doc.setFont(undefined, 'bold');
-        doc.setTextColor(0, 0, 0);
-        doc.text('APROVO:', marginLeft + colWidth * 2 + colWidth / 2, authTextY, { align: 'center' });
-        doc.setFont(undefined, 'normal');
-        doc.text('_________________________', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 10, { align: 'center' });
-        doc.text(spreadsheetHeader.aprovacao.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 15, { align: 'center' });
-        doc.text(spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO', marginLeft + colWidth * 2 + colWidth / 2, authTextY + 20, { align: 'center' });
-      }
-      
-      currentY += headerBoxHeight + 0;
+        try {
+          const storage = getStorage();
+          const resolveStoragePath = (raw: string): string | undefined => {
+            if (!raw) return undefined;
+            if (raw.startsWith('http')) {
+              const idx = raw.indexOf('/o/');
+              if (idx >= 0) {
+                const after = raw.substring(idx + 3);
+                const endQ = after.indexOf('?');
+                const encoded = endQ >= 0 ? after.substring(0, endQ) : after;
+                return decodeURIComponent(encoded);
+              }
+              return undefined;
+            }
+            return raw;
+          };
 
-      // Desenhar caixas do Mês e Periodo
-      //doc.setFillColor(255, 255, 224); // Amarelo claro
-      //doc.rect(marginLeft, currentY, contentWidth, 13, 'FD');
+          const path = resolveStoragePath(spreadsheetHeader.imagemUrl);
+          console.log('[PDF] Storage path resolvido', path);
+          if (path) {
+            const sRef = storageRef(storage, path);
+            let format: 'PNG' | 'JPEG' = path.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG';
+            try {
+              const meta = await getMetadata(sRef);
+              console.log('[PDF] getMetadata OK', meta.contentType);
+              if (meta.contentType?.includes('png')) format = 'PNG';
+              if (meta.contentType?.includes('jpeg') || meta.contentType?.includes('jpg')) format = 'JPEG';
+            } catch {
+              console.log('[PDF] getMetadata falhou, inferindo pelo path');
+            }
+
+            try {
+              console.log('[PDF] getBytes: iniciando download de bytes');
+              const arrayBuffer = await getBytes(sRef);
+              console.log('[PDF] getBytes OK, tamanho', arrayBuffer.byteLength);
+              const uint = new Uint8Array(arrayBuffer);
+              let binary = '';
+              const chunk = 0x8000;
+              for (let i = 0; i < uint.length; i += chunk) {
+                binary += String.fromCharCode.apply(null, Array.from(uint.subarray(i, i + chunk)));
+              }
+              const base64 = btoa(binary);
+              const mime = format === 'PNG' ? 'image/png' : 'image/jpeg';
+              const dataUrl = `data:${mime};base64,${base64}`;
+              headerImageData = { dataUrl, format };
+              console.log('[PDF] dataUrl gerado, tamanho', dataUrl.length);
+            } catch (e) {
+              console.log('[PDF] getBytes falhou', e);
+            }
+          }
+        } catch (e) {
+          console.log('[PDF] Erro geral ao resolver imagem', e);
+        }
+      }
       
-      // Mês
-      // Opções para formatar como MM/YYYY
-      const optionsMes: Intl.DateTimeFormatOptions = {
-        month: '2-digit',
-        year: 'numeric',
-        timeZone: 'UTC' // Define o fuso horário como UTC
-      };
-      const periodoMes = new Intl.DateTimeFormat('pt-BR', optionsMes).format(new Date(formData.dataInicial));
-      const periodoMesTexto = `Mês: ${periodoMes}`;
-      doc.setFontSize(11);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(128, 0, 0); // Vermelho escuro
-      doc.text(periodoMesTexto, pageWidth - marginRight - 5, currentY + 5, { align: 'right' });
+      // Calcular totais
+      const totalDias = efetivoEscalado.reduce((sum, efetivo) => sum + efetivo.dias.length, 0);
+      const totalValor = totalDias * 204.87;
       
-      currentY += 5;
-      // Período
-      // Opções para formatar como DD/MM/YYYY
-      const options: Intl.DateTimeFormatOptions = {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        timeZone: 'UTC' // Define o fuso horário como UTC
-      };
-      const periodoInicio = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataInicial));
-      const periodoFinal = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataFinal));
-      const periodoTexto = `Período: ${periodoInicio} a ${periodoFinal}`;
-      doc.setFontSize(11);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(128, 0, 0); // Vermelho escuro
-      doc.text(periodoTexto, pageWidth - marginRight - 5, currentY + 5, { align: 'right' });
-      
-      currentY += 8;
-      
-      // ===== TABELA COM DADOS =====
+      // ===== PREPARAR DADOS DA TABELA =====
       const tableData = [];
       const VALOR_POR_DIA = 204.87;
       
@@ -338,9 +404,9 @@ export default function Planilha() {
           const valorGrupo = qtdDias * VALOR_POR_DIA;
           
           const row = [];
-          row.push(i === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''); // Nome completo apenas na primeira linha
-          row.push(i === 0 ? (efetivo.cpf || '') : ''); // CPF apenas na primeira linha
-          row.push(i === 0 ? (efetivo.matriculaFuncional || '') : ''); // Matrícula funcional apenas na primeira linha
+          row.push( efetivo.nomeCompleto || efetivo.nome); // Nome completo em cada linha
+          row.push( efetivo.cpf || ''); // CPF em cada linha
+          row.push( efetivo.matriculaFuncional || ''); // Matrícula funcional em cada linha
           
           // Adicionar dias do grupo (máximo 12)
           for (let j = 0; j < 12; j++) {
@@ -348,7 +414,6 @@ export default function Planilha() {
           }
           
           row.push(qtdDias); // Quantidade
-          row.push(''); // HS - não temos no momento
           row.push(valorGrupo.toLocaleString('pt-BR', { 
             style: 'currency', 
             currency: 'BRL' 
@@ -358,25 +423,46 @@ export default function Planilha() {
         }
       });
       
-      // Adicionar linha de total
-      const totalDias = efetivoEscalado.reduce((sum, efetivo) => sum + efetivo.dias.length, 0);
-      const totalValor = totalDias * VALOR_POR_DIA;
+      // Adicionar linha de total com layout diferenciado (mescla e destaque)
+      const totalRow: any[] = [];
+      totalRow.push({
+        content: '',
+        colSpan: 12,
+        styles: {
+          fillColor: [255, 255, 255] as [number, number, number],
+          lineColor: [255, 255, 255] as [number, number, number]
+        }
+      });
+      totalRow.push({
+        content: 'TOTAL',
+        colSpan: 3,
+        styles: {
+          fontStyle: 'bold' as const,
+          halign: 'center' as const,
+          fillColor: [255, 255, 255] as [number, number, number],
+          //textColor: [0, 0, 0] as [number, number, number],
+          //lineWidth: 0.3,
+          lineColor: [0, 0, 0] as [number, number, number]
+        }
+      });
+      totalRow.push({
+        content: totalDias,
+        styles: {
+          fillColor: [255, 255, 255] as [number, number, number],
+          fontStyle: 'bold' as const,
+          halign: 'center' as const
+        }
+      });
+      totalRow.push({
+        content: totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        styles: {
+          fillColor: [255, 255, 255] as [number, number, number],
+          fontStyle: 'bold' as const,
+          halign: 'right' as const
+        }
+      });
       
-      const totalRow = [];
-      totalRow.push('TOTAL');
-      totalRow.push('');
-      totalRow.push('');
-      for (let i = 0; i < 12; i++) {
-        totalRow.push('');
-      }
-      totalRow.push(totalDias);
-      totalRow.push('');
-      totalRow.push(totalValor.toLocaleString('pt-BR', { 
-        style: 'currency', 
-        currency: 'BRL' 
-      }));
-      
-      tableData.push(totalRow);
+      // Não adiciona total global aqui; será adicionado por página mais abaixo
       
       // Cabeçalho da tabela com duas linhas
       const headerRow1 = [
@@ -384,17 +470,6 @@ export default function Planilha() {
         { content: 'CPF', rowSpan: 2 },
         { content: 'Matrícula\nFuncional', rowSpan: 2 },
         { content: 'DATAS DAS JORNADAS', colSpan: 12 },
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
-        { content: '', colSpan: 0 }, // Continuação do merge
         { content: 'Qde', rowSpan: 2 },
         { content: 'Valor (R$)', rowSpan: 2 }
       ];
@@ -414,590 +489,239 @@ export default function Planilha() {
         { content: '12º' }
       ];
       
-      // Configurações da tabela
-      autoTable(doc, {
-        head: [headerRow1, headerRow2],
-        body: tableData,
-        startY: currentY + 5,
-        theme: 'grid',
-        styles: {
-          fontSize: 9,
-          cellPadding: 2,
-          fillColor: [240, 255, 240], // Verde claro
-          textColor: [0, 0, 0],
-          lineColor: [0, 0, 0],
-          lineWidth: 0.1
-        },
-        headStyles: {
-          fillColor: [200, 230, 200], // Verde mais escuro para cabeçalho
-          textColor: [0, 0, 0],
-          fontStyle: 'bold',
-          halign: 'center'
-        },
-        columnStyles: {
-          0: { halign: 'left', fontStyle: 'bold' }, // Nome
-          1: { halign: 'center' }, // CPF
-          2: { halign: 'center' }, // Matrícula
-          3: { halign: 'center' }, // 1º
-          4: { halign: 'center' }, // 2º
-          5: { halign: 'center' }, // 3º
-          6: { halign: 'center' }, // 4º
-          7: { halign: 'center' }, // 5º
-          8: { halign: 'center' }, // 6º
-          9: { halign: 'center' }, // 7º
-          10: { halign: 'center' }, // 8º
-          11: { halign: 'center' }, // 9º
-          12: { halign: 'center' }, // 10º
-          13: { halign: 'center' }, // 11º
-          14: { halign: 'center' }, // 12º
-          15: { halign: 'center', fontStyle: 'bold' }, // Qde
-          16: { halign: 'center' }, // HS
-          17: { halign: 'right', fontStyle: 'bold' } // Valor
-        },
-        alternateRowStyles: {
-          fillColor: [248, 255, 248] // Verde ainda mais claro para linhas alternadas
+      // ===== IMPLEMENTAR PAGINAÇÃO COM CABEÇALHO E RODAPÉ REPETIDOS =====
+      
+      // Calcular quantidade de linhas por página (considerando espaço para cabeçalho e rodapé)
+      const linhasPorPagina = 10; // Ajustado para caber com cabeçalho e rodapé
+      let paginaAtual = 1;
+      let totalPaginas = Math.ceil(tableData.length / linhasPorPagina);
+      let cumulativeDias = 0;
+      let cumulativeValor = 0;
+      
+      // Função para adicionar nova página e desenhar cabeçalho
+      const addPageWithHeader = (currentPage: number, totalPages: number) => {
+        if (currentPage > 1) {
+          doc.addPage();
         }
-      });
+        
+        console.log('[PDF] addPageWithHeader', { currentPage, totalPages, headerImageDisponivel: !!headerImageData });
+        const headerEndY = drawHeader(doc, pageWidth, marginLeft, marginRight, marginTop, currentPage, totalPages, headerImageData);
+        
+        // Adicionar informações de mês e período
+        let currentY = headerEndY + 5;
+        
+        // Mês
+        const optionsMes: Intl.DateTimeFormatOptions = {
+          month: '2-digit',
+          year: 'numeric',
+          timeZone: 'UTC'
+        };
+        const periodoMes = new Intl.DateTimeFormat('pt-BR', optionsMes).format(new Date(formData.dataInicial));
+        const periodoMesTexto = `Mês: ${periodoMes}`;
+        doc.setFontSize(11);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(128, 0, 0);
+        doc.text(periodoMesTexto, pageWidth - marginRight, currentY, { align: 'right' });
+        
+        // Período
+        currentY += 5;
+        const options: Intl.DateTimeFormatOptions = {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          timeZone: 'UTC'
+        };
+        const periodoInicio = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataInicial));
+        const periodoFinal = new Intl.DateTimeFormat('pt-BR', options).format(new Date(formData.dataFinal));
+        const periodoTexto = `Período: ${periodoInicio} a ${periodoFinal}`;
+        doc.text(periodoTexto, pageWidth - marginRight, currentY, { align: 'right' });
+        
+        return currentY + 8;
+      };
       
-      // Pegar posição Y após a tabela
-      const finalY = (doc as any).lastAutoTable.finalY || currentY + 50;
-      
-      // ===== RODAPÉ COM ASSINATURAS =====
-      const footerY = finalY + 15;
-      const footerBoxHeight = 20;
-      
-      // Caixa da esquerda - Diretor da Escola
-      doc.setFillColor(255, 255, 255);
-      doc.rect(marginLeft, footerY, colWidth, footerBoxHeight, 'FD');
-      
-      // Caixa da direita - Coordenadora
-      doc.rect(marginLeft + colWidth * 2, footerY, colWidth, footerBoxHeight, 'FD');
-      
-      // Adicionar textos do rodapé
-      doc.setFontSize(10);
-      doc.setFont(undefined, 'normal');
-      doc.setTextColor(0, 0, 0);
-      
-      // Assinatura esquerda
-      const footerTextY = footerY + 5;
-      doc.text('PAULO DAMASCENO COSTA', marginLeft + colWidth / 2, footerTextY, { align: 'center' });
-      doc.text('DIRETOR DA ESCOLA', marginLeft + colWidth / 2, footerTextY + 5, { align: 'center' });
-      doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth / 2, footerTextY + 10, { align: 'center' });
-      
-      // Assinatura direita
-      doc.text('ELIZABETE LIMA SOARES - CAP', marginLeft + colWidth * 2 + colWidth / 2, footerTextY, { align: 'center' });
-      doc.text('COORDENADORA DA SME', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 5, { align: 'center' });
-      doc.text('PROFª RAIMUNDA MOTA', marginLeft + colWidth * 2 + colWidth / 2, footerTextY + 10, { align: 'center' });
-      
-      // Informações adicionais
-      const infoY = footerY + footerBoxHeight + 10;
-      doc.setFontSize(9);
-      doc.text(`Planilha gerada em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, marginLeft, infoY);
-      doc.text(`Unidade: ${userUnits.find(u => u.code === formData.unidade)?.titulo || formData.unidade}`, marginLeft, infoY + 5);
-      doc.text(`Total de servidores: ${efetivoEscalado.length}`, marginLeft, infoY + 10);
-      doc.text(`Total de dias trabalhados: ${totalDias}`, marginLeft, infoY + 15);
-      doc.text(`Valor total: ${totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`, marginLeft, infoY + 20);
-      
-      // Número da página
-      doc.setFontSize(8);
-      doc.text('PÁG 1 DE 1', pageWidth - marginRight, pageHeight - 10, { align: 'right' });
-      
-      // Gerar e salvar o PDF
+      // Processar dados em páginas
+      for (let i = 0; i < tableData.length; i += linhasPorPagina) {
+        const dadosPagina = tableData.slice(i, i + linhasPorPagina);
+        
+        // Adicionar página com cabeçalho
+        const tableStartY = addPageWithHeader(paginaAtual, totalPaginas);
+        
+        // Adicionar total da página (linha especial)
+        const pageTotalDias = dadosPagina.reduce((sum: number, row: any[]) => {
+          const qtd = row?.[15];
+          return sum + (typeof qtd === 'number' ? qtd : 0);
+        }, 0);
+        const pageTotalValor = pageTotalDias * VALOR_POR_DIA;
+
+        const pageTotalRow: any[] = [];
+        pageTotalRow.push({
+          content: '',
+          colSpan: 12,
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            lineWidth: 0
+          }
+        });
+        pageTotalRow.push({
+          content: 'TOTAL',
+          colSpan: 3,
+          styles: {
+            fontStyle: 'bold' as const,
+            halign: 'center' as const,
+            fillColor: [255, 255, 255] as [number, number, number],
+            lineColor: [0, 0, 0] as [number, number, number]
+          }
+        });
+        pageTotalRow.push({
+          content: pageTotalDias,
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            fontStyle: 'bold' as const,
+            halign: 'center' as const
+          }
+        });
+        pageTotalRow.push({
+          content: pageTotalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            fontStyle: 'bold' as const,
+            halign: 'right' as const
+          }
+        });
+
+        // Atualiza acumulado (páginas 1..paginaAtual)
+        cumulativeDias += pageTotalDias;
+        cumulativeValor += pageTotalValor;
+
+        // Linha acumulada com mesmo layout do TOTAL
+        const pageCumRow: any[] = [];
+        pageCumRow.push({
+          content: '',
+          colSpan: 12,
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            lineColor: [255, 255, 255] as [number, number, number]
+          }
+        });
+        pageCumRow.push({
+          content: `TOTAL GERAL`,
+          colSpan: 3,
+          styles: {
+            fontStyle: 'bold' as const,
+            halign: 'center' as const,
+            fillColor: [255, 255, 255] as [number, number, number],
+            lineColor: [0, 0, 0] as [number, number, number]
+          }
+        });
+        pageCumRow.push({
+          content: cumulativeDias,
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            fontStyle: 'bold' as const,
+            halign: 'center' as const
+          }
+        });
+        pageCumRow.push({
+          content: cumulativeValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+          styles: {
+            fillColor: [255, 255, 255] as [number, number, number],
+            fontStyle: 'bold' as const,
+            halign: 'right' as const
+          }
+        });
+
+        dadosPagina.push(pageTotalRow);
+        dadosPagina.push(pageCumRow);
+
+        // Configurar e desenhar tabela para esta página
+        const tableOptions = {
+          head: [headerRow1, headerRow2],
+          body: dadosPagina,
+          startY: tableStartY,
+          margin: { left: marginLeft, right: marginRight, top: 0, bottom: 40 },
+          tableWidth: contentWidth,
+          theme: 'grid' as const,
+          styles: {
+            fontSize: 9,
+            cellPadding: { top: 2, bottom: 2, left: 1, right: 1 },
+            fillColor: [240, 255, 240] as [number, number, number],
+            textColor: [0, 0, 0] as [number, number, number],
+            lineColor: [0, 0, 0] as [number, number, number],
+            lineWidth: 0.1
+          },
+          headStyles: {
+            fillColor: [200, 230, 200] as [number, number, number],
+            textColor: [0, 0, 0] as [number, number, number],
+            fontStyle: 'bold' as const,
+            halign: 'center' as const,
+            valign: 'middle' as const,
+          },
+          columnStyles: {
+            0: { halign: 'left' as const, width: 30},
+            1: { halign: 'center' as const },
+            2: { halign: 'center' as const },
+            3: { halign: 'center' as const },
+            4: { halign: 'center' as const },
+            5: { halign: 'center' as const },
+            6: { halign: 'center' as const },
+            7: { halign: 'center' as const },
+            8: { halign: 'center' as const },
+            9: { halign: 'center' as const },
+            10: { halign: 'center' as const },
+            11: { halign: 'center' as const },
+            12: { halign: 'center' as const },
+            13: { halign: 'center' as const },
+            14: { halign: 'center' as const },
+            15: { halign: 'center' as const },
+            16: { halign: 'right' as const }
+          },
+          alternateRowStyles: {
+            fillColor: [248, 255, 248] as [number, number, number]
+          },
+          showHead: 'firstPage' as const,
+          showFoot: 'never' as const,
+          didDrawCell: (data: any) => {
+            const rawRow = data?.row?.raw;
+            if (!Array.isArray(rawRow)) return;
+
+            const isTotalRow = rawRow[1]?.content === 'TOTAL';
+            const isCumRow = typeof rawRow[1]?.content === 'string' && rawRow[1]?.content.startsWith('TOTAL DA SOMA DAS PÁGINAS');
+            const isFirstMergedCell = data?.cell?.raw?.colSpan === 12;
+
+            if ((isTotalRow || isCumRow) && isFirstMergedCell) {
+              const x = data.cell.x;
+              const y = data.cell.y;
+              const w = data.cell.width;
+              const h = data.cell.height;
+
+              // desenha apenas topo e direita (pretas); esquerda e baixo sem borda
+              data.doc.setDrawColor(0, 0, 0);
+              data.doc.setLineWidth(0.1);
+              data.doc.line(x, y, x + w, y); // topo
+              data.doc.line(x + w, y, x + w, y + h); // direita
+            }
+          }
+        };
+
+        // Desenhar tabela para esta página
+        autoTable(doc, tableOptions);
+
+        // Rodapé da página
+        drawFooter(doc, pageWidth, pageHeight, marginLeft, marginRight, paginaAtual, totalPaginas, totalDias, totalValor);
+
+        paginaAtual++;
+      }
+
       const fileName = `Efetivo_Escalado_${formData.unidade}_${formData.dataInicial}_a_${formData.dataFinal}.pdf`;
       doc.save(fileName);
-      
+
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('Erro ao gerar PDF. Tente novamente.');
     } finally {
       setIsGeneratingPDF(false);
     }
-  };
-
-  const gerarPlanilhaExcel = async () => {
-    if (efetivoEscalado.length === 0) {
-      alert('Nenhum dado para gerar planilha');
-      return;
-    }
-
-    setIsGenerating(true);
-    const VALOR_POR_DIA = 204.87;
-
-    try {
-      // Criar workbook e worksheet
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet([]);
-
-      // Configurar largura das colunas
-      const colWidths = [
-        { wch: 30 }, // Nome
-        { wch: 15 }, // CPF
-        { wch: 15 }, // Matrícula funcional
-        { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // Dias 1º-12º
-        { wch: 8 }, // Qtd
-        { wch: 15 }, // Valor (R$)
-      ];
-      ws['!cols'] = colWidths;
-
-      // ===== CABEÇALHO DA PLANILHA COM 3 COLUNAS =====
-      const headerRows: any[][] = [];
-      
-      // Configurar largura das colunas para o cabeçalho (3 seções: A-F, G-L, M-Q)
-      const headerColWidths = [
-        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, // Colunas A-F (Autorização)
-        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, // Colunas G-L (Brasão)
-        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }  // Colunas M-Q (Aprovação)
-      ];
-      ws['!cols'] = headerColWidths;
-
-      // Linha 1: Título principal (mesclado se existir)
-      if (spreadsheetHeader.titulo) {
-        headerRows.push(Array(17).fill(''));
-        headerRows.push(Array(17).fill(''));
-        headerRows[0][0] = spreadsheetHeader.titulo;
-      }
-
-      // Linhas do cabeçalho três colunas (Autorização | Brasão | Aprovação)
-      const linhasAutorizacao = 4;
-      const linhasAprovacao = 4;
-      
-      for (let i = 0; i < Math.max(linhasAutorizacao, linhasAprovacao); i++) {
-        const row = Array(17).fill('');
-        
-        // Coluna da Esquerda - Autorização (A-F)
-        if (i === 0) {
-          row[0] = 'AUTORIZO:'; // A1
-        } else if (i === 1) {
-          row[0] = '_________________________'; // Linha para assinatura
-        } else if (i === 2) {
-          row[0] = spreadsheetHeader.autorizacao?.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO';
-        } else if (i === 3) {
-          row[0] = spreadsheetHeader.autorizacao?.cargo || 'CARGO NÃO CONFIGURADO';
-        }
-        
-        // Coluna do Centro - Brasão/Emblema (G-L)
-        if (i === 1) {
-          row[6] = '[BRASÃO/EMBLEMA]'; // Espaço reservado para o brasão
-        } else if (i === 2 && spreadsheetHeader.imagemUrl) {
-          row[6] = '[IMAGEM CONFIGURADA]'; // Indica que há imagem configurada
-        }
-        
-        // Coluna da Direita - Aprovação (M-Q)
-        if (spreadsheetHeader.aprovacao) {
-          if (i === 0) {
-            row[12] = 'APROVO:'; // M1
-          } else if (i === 1) {
-            row[12] = '_________________________'; // Linha para assinatura
-          } else if (i === 2) {
-            row[12] = spreadsheetHeader.aprovacao.nome?.toUpperCase() || 'NOME NÃO CONFIGURADO';
-          } else if (i === 3) {
-            row[12] = spreadsheetHeader.aprovacao.cargo || 'CARGO NÃO CONFIGURADO';
-          }
-        }
-        
-        headerRows.push(row);
-      }
-
-      // Linha vazia após o cabeçalho
-      headerRows.push(Array(17).fill(''));
-      
-      // Linha do período (mesclada)
-      const periodoTexto = `Período: ${formData.dataInicial} a ${formData.dataFinal}`;
-      const periodoRowData = Array(17).fill('');
-      periodoRowData[0] = periodoTexto;
-      headerRows.push(periodoRowData);
-      
-      // Linha vazia antes da tabela
-      headerRows.push(Array(17).fill(''));
-
-      // Cabeçalho da tabela com duas linhas conforme imagem (17 colunas total)
-      const headerRow1 = [
-        'Nome',
-        'CPF',
-        'Matrícula\nfuncional',
-        'DATAS DAS JORNADAS',
-        '', '', '', '', '', '', '', '', '', '', '', '', // 12 colunas vazias para dias
-        'Qtd',
-        'Valor (R$)'
-      ];
-      
-      const headerRow2 = [
-        '', // Nome
-        '', // CPF
-        '', // Matrícula funcional
-        '1º', '2º', '3º', '4º', '5º', '6º', '7º', '8º', '9º', '10º', '11º', '12º', // Dias
-        '', // Qtd na segunda linha (vazio, pois Qtd está na primeira linha)
-        ''  // Valor (R$) na segunda linha (vazio, pois Valor está na primeira linha)
-      ];
-
-      // Processar dados dos efetivos em grupos de 12 dias
-      const allRows: any[][] = [];
-      
-      efetivoEscalado.forEach(efetivo => {
-        const diasTrabalhados = efetivo.dias.length;
-        const totalValor = diasTrabalhados * VALOR_POR_DIA;
-        
-        // Dividir dias em grupos de 12
-        for (let i = 0; i < efetivo.dias.length; i += 12) {
-          const grupoDias = efetivo.dias.slice(i, i + 12);
-          const qtdDias = grupoDias.length;
-          const valorGrupo = qtdDias * VALOR_POR_DIA;
-          
-          const row = Array(17).fill(''); // 3 colunas iniciais + 12 dias + qtd + valor (17 total)
-          row[0] = i === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''; // Nome completo apenas na primeira linha
-          row[1] = i === 0 ? (efetivo.cpf || '') : ''; // CPF apenas na primeira linha
-          row[2] = i === 0 ? (efetivo.matriculaFuncional || '') : ''; // Matrícula funcional apenas na primeira linha
-          
-          // Preencher dias do grupo
-          grupoDias.forEach((dia, index) => {
-            row[3 + index] = dia; // Coluna 4 = dia 1º
-          });
-          
-          row[15] = qtdDias; // Quantidade
-          row[16] = valorGrupo.toLocaleString('pt-BR', { 
-            style: 'currency', 
-            currency: 'BRL' 
-          }); // Valor formatado
-          
-          allRows.push(row);
-        }
-      });
-
-      // Adicionar linha de total
-      const totalDias = efetivoEscalado.reduce((sum, efetivo) => sum + efetivo.dias.length, 0);
-      const totalValor = totalDias * VALOR_POR_DIA;
-      
-      const totalRow = Array(17).fill('');
-      totalRow[0] = 'TOTAL';
-      totalRow[15] = totalDias;
-      totalRow[16] = totalValor.toLocaleString('pt-BR', { 
-        style: 'currency', 
-        currency: 'BRL' 
-      });
-      allRows.push(totalRow);
-
-      // ===== RODAPÉ DA PLANILHA =====
-      const footerRows: any[][] = [];
-      footerRows.push(['']); // Linha vazia antes do rodapé
-      
-      // Informações adicionais no rodapé
-      const dataGeracao = new Date().toLocaleDateString('pt-BR');
-      const horaGeracao = new Date().toLocaleTimeString('pt-BR');
-      
-      footerRows.push([`Planilha gerada em ${dataGeracao} às ${horaGeracao}`]);
-      footerRows.push([`Unidade: ${userUnits.find(u => u.code === formData.unidade)?.titulo || formData.unidade}`]);
-      footerRows.push([`Total de servidores: ${efetivoEscalado.length}`]);
-      footerRows.push([`Total de dias trabalhados: ${totalDias}`]);
-      footerRows.push([`Valor total: ${totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`]);
-
-      // Combinar todos os dados: Cabeçalho + Tabela + Rodapé
-      const allData = [
-        ...headerRows,
-        headerRow1,
-        headerRow2,
-        ...allRows,
-        ...footerRows
-      ];
-
-      // Adicionar dados ao worksheet
-      XLSX.utils.sheet_add_aoa(ws, allData, { origin: 'A1' });
-
-      // ===== CONFIGURAÇÃO DE MESCLAGEM DE CÉLULAS PARA 3 COLUNAS =====
-      if (!ws['!merges']) ws['!merges'] = [];
-      
-      const ultimaLinhaHeader = headerRows.length - 1;
-      const linhaPeriodo = ultimaLinhaHeader - 1;
-      
-      // Mesclar células do título principal (se existir) - ocupa todas as colunas
-      if (spreadsheetHeader.titulo) {
-        ws['!merges'].push(
-          { s: { r: 0, c: 0 }, e: { r: 1, c: 16 } } // Título mesclado (2 linhas)
-        );
-      }
-      
-      // Mesclar seções do cabeçalho em 3 colunas
-      const offsetTitulo = spreadsheetHeader.titulo ? 2 : 0;
-      
-      // Seção Autorização (colunas A-F)
-      for (let i = 0; i < 4; i++) {
-        ws['!merges'].push(
-          { s: { r: offsetTitulo + i, c: 0 }, e: { r: offsetTitulo + i, c: 5 } } // A-F
-        );
-      }
-      
-      // Seção Brasão/Emblema (colunas G-L) - espaço reservado
-      for (let i = 0; i < 4; i++) {
-        ws['!merges'].push(
-          { s: { r: offsetTitulo + i, c: 6 }, e: { r: offsetTitulo + i, c: 11 } } // G-L
-        );
-      }
-      
-      // Seção Aprovação (colunas M-Q)
-      if (spreadsheetHeader.aprovacao) {
-        for (let i = 0; i < 4; i++) {
-          ws['!merges'].push(
-            { s: { r: offsetTitulo + i, c: 12 }, e: { r: offsetTitulo + i, c: 16 } } // M-Q
-          );
-        }
-      }
-      
-      // Mesclar período
-      ws['!merges'].push(
-        { s: { r: linhaPeriodo, c: 0 }, e: { r: linhaPeriodo, c: 16 } }
-      );
-
-      // Mesclar células do cabeçalho da tabela (estrutura de duas linhas)
-      const tableStartRow = ultimaLinhaHeader + 1;
-      
-      // Mesclar colunas que ocupam duas linhas (Nome, CPF, Matrícula funcional, Qtd, Valor)
-      ws['!merges'].push(
-        { s: { r: tableStartRow, c: 0 }, e: { r: tableStartRow + 1, c: 0 } }, // Nome
-        { s: { r: tableStartRow, c: 1 }, e: { r: tableStartRow + 1, c: 1 } }, // CPF
-        { s: { r: tableStartRow, c: 2 }, e: { r: tableStartRow + 1, c: 2 } }, // Matrícula funcional
-        { s: { r: tableStartRow, c: 15 }, e: { r: tableStartRow + 1, c: 15 } }, // Qtd
-        { s: { r: tableStartRow, c: 16 }, e: { r: tableStartRow + 1, c: 16 } }  // Valor (R$)
-      );
-      
-      // Mesclar "DATAS DAS JORNADAS" que ocupa 12 colunas na primeira linha
-      ws['!merges'].push(
-        { s: { r: tableStartRow, c: 3 }, e: { r: tableStartRow, c: 14 } } // DATAS DAS JORNADAS
-      );
-
-      // Mesclar rodapé (todas as linhas do rodapé)
-      const footerStartRow = tableStartRow + allRows.length + 2; // +2 por causa das 2 linhas do cabeçalho da tabela
-      for (let i = 0; i < footerRows.length; i++) {
-        ws['!merges'].push(
-          { s: { r: footerStartRow + i, c: 0 }, e: { r: footerStartRow + i, c: 16 } }
-        );
-      }
-
-      // Estilos
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      
-      // Aplicar fundo amarelo claro e bordas discretas para toda a planilha
-      for (let R = range.s.r; R <= range.e.r; R++) {
-        for (let C = range.s.c; C <= range.e.c; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
-          if (!ws[cellRef].s) ws[cellRef].s = {};
-          ws[cellRef].s.fill = { fgColor: { rgb: 'FFFFE0' } }; // Amarelo claro
-          ws[cellRef].s.border = {
-            top: { style: 'thin', color: { rgb: 'CCCCCC' } },
-            bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
-            left: { style: 'thin', color: { rgb: 'CCCCCC' } },
-            right: { style: 'thin', color: { rgb: 'CCCCCC' } }
-          };
-        }
-      }
-      
-      // ===== ESTILOS =====
-      
-      // ===== ESTILOS PARA O LAYOUT COM 3 COLUNAS =====
-      
-      // Estilos do cabeçalho
-      const tituloRow = 0;
-      const headerStartRow = spreadsheetHeader.titulo ? 2 : 0;
-      const periodoRow = headerStartRow + 5; // 4 linhas de cabeçalho + 1 linha vazia
-      
-      // Estilo do título
-      if (spreadsheetHeader.titulo) {
-        const tituloCell = XLSX.utils.encode_cell({ r: tituloRow, c: 0 });
-        if (ws[tituloCell]) {
-          ws[tituloCell].s = {
-            ...ws[tituloCell].s,
-            font: { bold: true, sz: 16, color: { rgb: '000080' } },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { fgColor: { rgb: 'E6F3FF' } }
-          };
-        }
-      }
-      
-      // Estilo das 3 colunas do cabeçalho
-      for (let R = headerStartRow; R < headerStartRow + 4; R++) {
-        // Coluna da Esquerda - Autorização (A-F) - Fundo branco
-        for (let C = 0; C <= 5; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (ws[cellRef] && ws[cellRef].v) {
-            ws[cellRef].s = {
-              ...ws[cellRef].s,
-              font: { 
-                bold: R === headerStartRow ? true : false, 
-                sz: 11, 
-                color: { rgb: '000000' } 
-              },
-              alignment: { horizontal: 'center', vertical: 'center' },
-              fill: { fgColor: { rgb: 'FFFFFF' } } // Fundo branco
-            };
-          }
-        }
-        
-        // Coluna do Centro - Brasão (G-L) - Fundo amarelo claro
-        for (let C = 6; C <= 11; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (ws[cellRef] && ws[cellRef].v) {
-            ws[cellRef].s = {
-              ...ws[cellRef].s,
-              font: { sz: 10, color: { rgb: '666666' } },
-              alignment: { horizontal: 'center', vertical: 'center' },
-              fill: { fgColor: { rgb: 'FFFFE0' } } // Fundo amarelo claro
-            };
-          }
-        }
-        
-        // Coluna da Direita - Aprovação (M-Q) - Fundo branco
-        if (spreadsheetHeader.aprovacao) {
-          for (let C = 12; C <= 16; C++) {
-            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-            if (ws[cellRef] && ws[cellRef].v) {
-              ws[cellRef].s = {
-                ...ws[cellRef].s,
-                font: { 
-                  bold: R === headerStartRow ? true : false, 
-                  sz: 11, 
-                  color: { rgb: '000000' } 
-                },
-                alignment: { horizontal: 'center', vertical: 'center' },
-                fill: { fgColor: { rgb: 'FFFFFF' } } // Fundo branco
-              };
-            }
-          }
-        }
-      }
-      
-      // Estilo da linha de período
-      const periodoRowIndex = headerStartRow + 5; // 4 linhas de cabeçalho + 1 linha vazia
-      for (let C = 0; C <= 16; C++) {
-        const cellRef = XLSX.utils.encode_cell({ r: periodoRowIndex, c: C });
-        if (ws[cellRef]) {
-          ws[cellRef].s = {
-            ...ws[cellRef].s,
-            font: { bold: true, sz: 11, color: { rgb: '800000' } },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { fgColor: { rgb: 'FFFACD' } }
-          };
-        }
-      }
-
-      // Estilo do cabeçalho da tabela (duas linhas) - usar tableStartRow já definido
-      
-      // Estilo para primeira linha do cabeçalho da tabela - 17 colunas
-      for (let C = 0; C <= 16; C++) {
-        const cellRef = XLSX.utils.encode_cell({ r: tableStartRow, c: C });
-        if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
-        ws[cellRef].s = {
-          font: { bold: true },
-          alignment: { horizontal: 'center', vertical: 'center' },
-          border: {
-            top: { style: 'medium', color: { rgb: '000000' } },
-            bottom: { style: 'thin', color: { rgb: '000000' } },
-            left: { style: 'thin', color: { rgb: '000000' } },
-            right: { style: 'thin', color: { rgb: '000000' } }
-          }
-        };
-      }
-      
-      // Estilo para segunda linha do cabeçalho da tabela (dias)
-      for (let C = 3; C <= 14; C++) {
-        const cellRef = XLSX.utils.encode_cell({ r: tableStartRow + 1, c: C });
-        if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
-        ws[cellRef].s = {
-          font: { bold: true },
-          alignment: { horizontal: 'center', vertical: 'center' },
-          border: {
-            top: { style: 'thin', color: { rgb: '000000' } },
-            bottom: { style: 'medium', color: { rgb: '000000' } },
-            left: { style: 'thin', color: { rgb: '000000' } },
-            right: { style: 'thin', color: { rgb: '000000' } }
-          }
-        };
-      }
-      
-      // Adicionar bordas fortes para Qtd e Valor nas duas linhas
-      for (let R = tableStartRow; R <= tableStartRow + 1; R++) {
-        for (let C = 15; C <= 16; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
-          ws[cellRef].s = {
-            font: { bold: true },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            border: {
-              top: { style: 'medium', color: { rgb: '000000' } },
-              bottom: { style: 'medium', color: { rgb: '000000' } },
-              left: { style: 'thin', color: { rgb: '000000' } },
-              right: { style: 'thin', color: { rgb: '000000' } }
-            }
-          };
-        }
-      }
-
-      // Estilo para dados das linhas (azul e sublinhado para nomes)
-      const dataStartRow = tableStartRow + 2;
-      for (let R = dataStartRow; R < footerStartRow; R++) {
-        // Nome (coluna 0) - azul e sublinhado
-        const nomeCellRef = XLSX.utils.encode_cell({ r: R, c: 0 });
-        if (ws[nomeCellRef] && ws[nomeCellRef].v) {
-          ws[nomeCellRef].s = {
-            ...ws[nomeCellRef].s,
-            font: { color: { rgb: '0000FF' }, underline: true },
-            alignment: { horizontal: 'left', vertical: 'center' }
-          };
-        }
-        
-        // Demais colunas - centro e preto
-        for (let C = 1; C <= 16; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (ws[cellRef]) {
-            ws[cellRef].s = {
-              ...ws[cellRef].s,
-              alignment: { horizontal: 'center', vertical: 'center' }
-            };
-          }
-        }
-      }
-
-      // Estilo do rodapé
-      for (let R = footerStartRow; R <= range.e.r; R++) {
-        for (let C = 0; C <= 16; C++) {
-          const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-          if (ws[cellRef]) {
-            ws[cellRef].s = {
-              ...ws[cellRef].s,
-              font: { sz: 10, color: { rgb: '555555' } },
-              alignment: { horizontal: 'left', vertical: 'center' },
-              fill: { fgColor: { rgb: 'F8F8F8' } },
-              border: {
-                top: { style: 'thin', color: { rgb: 'DDDDDD' } },
-                bottom: { style: 'thin', color: { rgb: 'DDDDDD' } },
-                left: { style: 'none' },
-                right: { style: 'none' }
-              }
-            };
-          }
-        }
-      }
-
-      // Adicionar worksheet ao workbook
-      XLSX.utils.book_append_sheet(wb, ws, 'Efetivo Escalado');
-
-      // Configurar página para paisagem A4
-      ws['!pageSetup'] = {
-        orientation: 'landscape',
-        paperSize: 9, // A4
-        margins: { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75 }
-      };
-
-      // Gerar arquivo
-      const fileName = `Efetivo_Escalado_${formData.unidade}_${formData.dataInicial}_a_${formData.dataFinal}.xlsx`;
-      XLSX.writeFile(wb, fileName);
-
-    } catch (error) {
-      console.error('Erro ao gerar planilha:', error);
-      alert('Erro ao gerar planilha. Tente novamente.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
+  }
   return (
     <div className="min-h-screen bg-surface-gray pt-[68px]">
       <PageHeader title="Planilha" />
@@ -1081,14 +805,14 @@ export default function Planilha() {
               <h3 className="text-lg font-semibold text-gray-text">Efetivo Escalado</h3>
               <div className="flex gap-3">
                 <button
-                  onClick={gerarPDF}
+                  onClick={generatePDF}
                   disabled={isGeneratingPDF}
                   className="px-4 py-2 bg-red-600 text-white font-medium rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isGeneratingPDF ? 'Gerando PDF...' : 'Gerar PDF'}
                 </button>
                 <button
-                  onClick={gerarPlanilhaExcel}
+                  //onClick={gerarPlanilhaExcel}
                   disabled={isGenerating}
                   className="px-4 py-2 bg-green-600 text-white font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
