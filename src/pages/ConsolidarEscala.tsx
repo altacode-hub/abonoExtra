@@ -65,9 +65,14 @@ export default function ConsolidarEscala() {
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [selectedDateIso, setSelectedDateIso] = useState<string>('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(missionId || 'manual');
+  const [funcaoIndex, setFuncaoIndex] = useState<number>(0);
+  const [sortPrevOrder, setSortPrevOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortNeverOrder, setSortNeverOrder] = useState<'asc' | 'desc'>('desc');
+  const [extrasCountByUid, setExtrasCountByUid] = useState<Record<string, number>>({});
   const [templates, setTemplates] = useState<Record<string, {
     titulo: string;
     referencias?: string[];
+    funcoes?: string[];
     inicio?: string;
     fim?: string;
     repetir?: boolean;
@@ -276,6 +281,54 @@ export default function ConsolidarEscala() {
     return availableTemplates.find((t) => `${t.id}::${t.referencia || ''}` === key) || null;
   }, [availableTemplates, selectedTemplateId]);
 
+  const selectedFuncoes = useMemo(() => {
+    if (!selectedTemplateId) return [] as string[];
+    if (selectedTemplateId === 'manual') {
+      const catalog = Object.values(funcCatalog || {});
+      return catalog.filter((f) => !!f);
+    }
+    const tplKey = selectedTemplateId.includes('::')
+      ? selectedTemplateId.split('::')[0]
+      : (selectedTemplateId.includes(':') ? selectedTemplateId.split(':')[0] : selectedTemplateId);
+    const tpl = templates[tplKey];
+    const fromTpl = (tpl?.funcoes || []).filter((f) => !!f);
+    if (fromTpl.length > 0) return fromTpl;
+    const catalog = Object.values(funcCatalog || {});
+    return catalog.filter((f) => !!f);
+  }, [selectedTemplateId, templates, funcCatalog]);
+
+  useEffect(() => {
+    setFuncaoIndex(0);
+  }, [selectedTemplateId]);
+
+  const currentFunc = useMemo(() => {
+    return selectedFuncoes[funcaoIndex] || '';
+  }, [selectedFuncoes, funcaoIndex]);
+
+  const prevList = useMemo(() => {
+    if (!currentFunc) return [] as Array<[string, any]>;
+    const entries = Object.entries(volunteersMap).filter(([uid]) => !selected[uid]);
+    const prev = entries.filter(([, e]) => (e as any)?.funcao === currentFunc);
+    const sorter = (a: [string, any], b: [string, any]) => {
+      const ca = extrasCountByUid[a[0]] || 0;
+      const cb = extrasCountByUid[b[0]] || 0;
+      return sortPrevOrder === 'desc' ? cb - ca : ca - cb;
+    };
+    return prev.sort(sorter);
+  }, [volunteersMap, selected, currentFunc, extrasCountByUid, sortPrevOrder]);
+
+  const neverList = useMemo(() => {
+    if (!currentFunc) return [] as Array<[string, any]>;
+    const entries = Object.entries(volunteersMap).filter(([uid]) => !selected[uid]);
+    const never = entries.filter(([, e]) => (e as any)?.funcao !== currentFunc);
+    const sorter = (a: [string, any], b: [string, any]) => {
+      const ca = extrasCountByUid[a[0]] || 0;
+      const cb = extrasCountByUid[b[0]] || 0;
+      return sortNeverOrder === 'desc' ? cb - ca : ca - cb;
+    };
+    return never.sort(sorter);
+  }, [volunteersMap, selected, currentFunc, extrasCountByUid, sortNeverOrder]);
+
   // Carrega perfis para exibir nome de guerra dos voluntários listados e telefone
   useEffect(() => {
     const uids = Object.keys(volunteersMap);
@@ -412,6 +465,37 @@ export default function ConsolidarEscala() {
     }
     return iso;
   };
+
+  useEffect(() => {
+    const effectiveDate = selectedDateIso || date;
+    const monthKey = (effectiveDate || '').slice(0, 7);
+    if (!unit || !monthKey) {
+      setExtrasCountByUid({});
+      return;
+    }
+    const uids = new Set<string>();
+    Object.keys(volunteersMap).forEach((uid) => uids.add(uid));
+    Object.keys(searchResults).forEach((uid) => uids.add(uid));
+    if (uids.size === 0) {
+      setExtrasCountByUid({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, number> = {};
+      for (const uid of Array.from(uids)) {
+        try {
+          const snap = await get(ref(db, `/userEscalas/${uid}/${monthKey}`));
+          const val = snap.val() || {};
+          next[uid] = Object.keys(val).length;
+        } catch {
+          next[uid] = 0;
+        }
+      }
+      if (!cancelled) setExtrasCountByUid(next);
+    })();
+    return () => { cancelled = true; };
+  }, [unit, selectedDateIso, date, volunteersMap, searchResults]);
 
   const finalize = async () => {
     const effectiveDate = selectedDateIso || date;
@@ -802,6 +886,22 @@ export default function ConsolidarEscala() {
         {wizardStep === 4 && (
         <section className="bg-white border rounded-lg p-4 shadow-card">
           <h3 className="text-md font-medium text-gray-text mb-2">Selecionar efetivo</h3>
+          {selectedFuncoes.length > 0 && (
+            <div className="mb-3">
+              <div className="flex flex-wrap gap-2">
+                {selectedFuncoes.map((fn, idx) => (
+                  <button
+                    key={`${fn}-${idx}`}
+                    className={`px-3 py-1 rounded border text-sm ${funcaoIndex === idx ? 'bg-primary text-white border-primary' : 'bg-white text-gray-text'}`}
+                    onClick={() => setFuncaoIndex(idx)}
+                    title={fn}
+                  >
+                    {fn}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Busca por RG para adicionar não voluntário */}
           <div className="mb-3 flex items-end gap-2">
@@ -832,12 +932,25 @@ export default function ConsolidarEscala() {
                   <li
                     key={uid}
                     className="py-2 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                    onClick={() => addSelected(uid, info.nome, info.email)}
+                    onClick={() => {
+                      const currentFunc = selectedFuncoes[funcaoIndex];
+                      addSelected(uid, info.nome, info.email);
+                      if (currentFunc) {
+                        setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                        const effectiveDate = selectedDateIso || date;
+                        const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                          ? selectedTemplateId.split('::')[0]
+                          : (missionId || selectedTemplateId);
+                        if (unit && effectiveDate && effectiveMission) {
+                          set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                        }
+                      }
+                    }}
                     title="Adicionar ao efetivo escalado"
                   >
                     <div>
                       <div className="font-medium">{info.nome || uid}</div>
-                      {info.email && <div className="text-sm text-gray-light">{info.email}</div>}
+                      <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
                     </div>
                     <span className="text-xs text-secondary">Adicionar</span>
                   </li>
@@ -851,20 +964,115 @@ export default function ConsolidarEscala() {
 
           {totalVolunteers === 0 ? (
             <p className="text-sm text-gray-light">Nenhum voluntário inscrito nesta escala.</p>
+          ) : selectedFuncoes.length > 0 ? (
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-text">Já escalados nessa função</span>
+                  <button
+                    type="button"
+                    className="p-2 border rounded"
+                    title={sortPrevOrder === 'desc' ? 'Ordenar por menos extras' : 'Ordenar por mais extras'}
+                    onClick={() => setSortPrevOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                  >
+                    {sortPrevOrder === 'desc' ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h10v2H7V6zm0 5h7v2H7v-2zm0 5h4v2H7v-2z"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h4v2H7V6zm0 5h7v2H7v-2zm0 5h10v2H7v-2z"/></svg>
+                    )}
+                  </button>
+                </div>
+                <ul className="divide-y">
+                  {prevList.map(([uid, v]) => (
+                    <li
+                      key={uid}
+                      className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                      onClick={() => {
+                        addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                        if (currentFunc) {
+                          setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                          const effectiveDate = selectedDateIso || date;
+                          const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                            ? selectedTemplateId.split('::')[0]
+                            : (missionId || selectedTemplateId);
+                          if (unit && effectiveDate && effectiveMission) {
+                            set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                          }
+                        }
+                      }}
+                      title="Adicionar ao efetivo escalado"
+                    >
+                      <div>
+                        <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                        <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
+                      </div>
+                      <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-text">Nunca escalados nessa função</span>
+                  <button
+                    type="button"
+                    className="p-2 border rounded"
+                    title={sortNeverOrder === 'desc' ? 'Ordenar por menos extras' : 'Ordenar por mais extras'}
+                    onClick={() => setSortNeverOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                  >
+                    {sortNeverOrder === 'desc' ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h10v2H7V6zm0 5h7v2H7v-2zm0 5h4v2H7v-2z"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h4v2H7V6zm0 5h7v2H7v-2zm0 5h10v2H7v-2z"/></svg>
+                    )}
+                  </button>
+                </div>
+                <ul className="divide-y">
+                  {neverList.map(([uid, v]) => (
+                    <li
+                      key={uid}
+                      className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                      onClick={() => {
+                        addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                        if (currentFunc) {
+                          setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                          const effectiveDate = selectedDateIso || date;
+                          const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                            ? selectedTemplateId.split('::')[0]
+                            : (missionId || selectedTemplateId);
+                          if (unit && effectiveDate && effectiveMission) {
+                            set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                          }
+                        }
+                      }}
+                      title="Adicionar ao efetivo escalado"
+                    >
+                      <div>
+                        <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                        <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
+                      </div>
+                      <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           ) : (
             <ul className="divide-y">
               {Object.entries(volunteersMap).filter(([uid]) => !selected[uid]).map(([uid, v]) => (
                 <li
                   key={uid}
                   className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                  onClick={() => addSelected(uid, v.nome, v.email)}
+                  onClick={() => {
+                    addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                  }}
                   title="Adicionar ao efetivo escalado"
                 >
                   <div>
-                    <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || v.nome || uid}</div>
-                    {v.email && <div className="text-sm text-gray-light">{v.email}</div>}
+                    <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                    <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
                   </div>
-                  <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : (v.status || 'voluntario')}</span>
+                  <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
                 </li>
               ))}
             </ul>
