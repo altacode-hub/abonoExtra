@@ -34,7 +34,6 @@ export default function ConsolidarEscala() {
   const [previousStatus, setPreviousStatus] = useState<Record<string, string>>({});
   const [funcoes, setFuncoes] = useState<Record<string, string>>({});
   const [funcModalUid, setFuncModalUid] = useState<string | null>(null);
-  const [funcCatalog, setFuncCatalog] = useState<Record<string, string>>({});
   const [funcSelectedKey, setFuncSelectedKey] = useState<string>('');
   const [newFuncLabel, setNewFuncLabel] = useState<string>('');
   const [savingNewFunc, setSavingNewFunc] = useState<boolean>(false);
@@ -73,6 +72,7 @@ export default function ConsolidarEscala() {
     titulo: string;
     referencias?: string[];
     funcoes?: string[];
+    funcoesByRef?: Record<string, string[]>;
     inicio?: string;
     fim?: string;
     repetir?: boolean;
@@ -177,16 +177,7 @@ export default function ConsolidarEscala() {
     return () => unsub();
   }, [unit]);
 
-  // Carrega catálogo de funções pré-cadastradas na Configuração
-  useEffect(() => {
-    if (!unit) {
-      setFuncCatalog({});
-      return;
-    }
-    const r = ref(db, `/units/${unit}/settings/funcoes`);
-    const unsub = onValue(r, (snap) => setFuncCatalog(snap.val() || {}));
-    return () => unsub();
-  }, [unit]);
+  // Catálogo de funções via missionTemplates (elimina dependência de /settings/funcoes)
 
   const slugify = (s: string) => (s || '')
     .toLowerCase()
@@ -197,13 +188,31 @@ export default function ConsolidarEscala() {
   const addFuncaoInline = async () => {
     const label = newFuncLabel.trim();
     if (!unit || !label) return;
-    const key = slugify(label);
     setSavingNewFunc(true);
     try {
-      await update(ref(db, `/units/${unit}/settings/funcoes`), { [key]: label });
-      setFuncSelectedKey(key);
+      setFuncSelectedKey(label);
       setNewFuncLabel('');
       setIsCreatingFunc(false);
+
+      // Persistir função ligada à missão (por referência), quando houver template selecionado
+      const sample: any = Object.values(volunteersMap)[0] || {};
+      const missionRefLabel = (missionForm.referencia || sample.referencia || sample.local || '').trim();
+      const hasTemplate = selectedTemplateId && selectedTemplateId !== 'manual';
+      if (hasTemplate && missionRefLabel) {
+        const tplKey = selectedTemplateId.includes('::')
+          ? selectedTemplateId.split('::')[0]
+          : (selectedTemplateId.includes(':') ? selectedTemplateId.split(':')[0] : selectedTemplateId);
+        // Adiciona no array global de funções do template
+        const funcoesPath = `/units/${unit}/missionTemplates/${tplKey}/funcoes`;
+        try {
+          const snapF = await get(ref(db, funcoesPath));
+          const prevF = snapF.val() || [];
+          const arrF = Array.isArray(prevF) ? prevF : Object.values(prevF || {});
+          if (!arrF.includes(label)) {
+            await set(ref(db, funcoesPath), [...arrF, label]);
+          }
+        } catch {}
+      }
     } finally {
       setSavingNewFunc(false);
     }
@@ -283,27 +292,44 @@ export default function ConsolidarEscala() {
 
   const selectedFuncoes = useMemo(() => {
     if (!selectedTemplateId) return [] as string[];
-    if (selectedTemplateId === 'manual') {
-      const catalog = Object.values(funcCatalog || {});
-      return catalog.filter((f) => !!f);
-    }
+    const sample: any = Object.values(volunteersMap)[0] || {};
+    const missionRefLabel = (missionForm.referencia || sample.referencia || sample.local || '').trim();
+    if (selectedTemplateId === 'manual') return [] as string[];
     const tplKey = selectedTemplateId.includes('::')
       ? selectedTemplateId.split('::')[0]
       : (selectedTemplateId.includes(':') ? selectedTemplateId.split(':')[0] : selectedTemplateId);
     const tpl = templates[tplKey];
+    const byRef = (tpl?.funcoesByRef && missionRefLabel) ? (tpl.funcoesByRef[missionRefLabel] || []) : [];
+    if ((byRef || []).length > 0) return (byRef || []).filter((f) => !!f);
     const fromTpl = (tpl?.funcoes || []).filter((f) => !!f);
-    if (fromTpl.length > 0) return fromTpl;
-    const catalog = Object.values(funcCatalog || {});
-    return catalog.filter((f) => !!f);
-  }, [selectedTemplateId, templates, funcCatalog]);
+    return fromTpl;
+  }, [selectedTemplateId, templates, missionForm.referencia, volunteersMap]);
+
+  const usedFuncoes = useMemo(() => {
+    const used = new Set<string>();
+    Object.keys(selected).forEach((uid) => {
+      if (!selected[uid]) return;
+      const label = (funcoes[uid] || volunteersMap[uid]?.funcao || '').trim();
+      if (label) used.add(label);
+    });
+    return used;
+  }, [selected, funcoes, volunteersMap]);
+
+  const availableFuncoes = useMemo(() => {
+    return selectedFuncoes.filter((f) => !usedFuncoes.has(f));
+  }, [selectedFuncoes, usedFuncoes]);
 
   useEffect(() => {
     setFuncaoIndex(0);
   }, [selectedTemplateId]);
 
   const currentFunc = useMemo(() => {
-    return selectedFuncoes[funcaoIndex] || '';
-  }, [selectedFuncoes, funcaoIndex]);
+    return availableFuncoes[funcaoIndex] || '';
+  }, [availableFuncoes, funcaoIndex]);
+
+  useEffect(() => {
+    if (funcaoIndex >= availableFuncoes.length) setFuncaoIndex(0);
+  }, [availableFuncoes, funcaoIndex]);
 
   const prevList = useMemo(() => {
     if (!currentFunc) return [] as Array<[string, any]>;
@@ -885,11 +911,11 @@ export default function ConsolidarEscala() {
         {/* Passo 4 — selecionar efetivo */}
         {wizardStep === 4 && (
         <section className="bg-white border rounded-lg p-4 shadow-card">
-          <h3 className="text-md font-medium text-gray-text mb-2">Selecionar efetivo</h3>
-          {selectedFuncoes.length > 0 && (
+          <h3 className="text-md font-medium text-gray-text mb-2">Selecionar efetivo por função</h3>
+          {availableFuncoes.length > 0 && (
             <div className="mb-3">
               <div className="flex flex-wrap gap-2">
-                {selectedFuncoes.map((fn, idx) => (
+                {availableFuncoes.map((fn, idx) => (
                   <button
                     key={`${fn}-${idx}`}
                     className={`px-3 py-1 rounded border text-sm ${funcaoIndex === idx ? 'bg-primary text-white border-primary' : 'bg-white text-gray-text'}`}
@@ -964,7 +990,7 @@ export default function ConsolidarEscala() {
 
           {totalVolunteers === 0 ? (
             <p className="text-sm text-gray-light">Nenhum voluntário inscrito nesta escala.</p>
-          ) : selectedFuncoes.length > 0 ? (
+          ) : availableFuncoes.length > 0 ? (
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -1125,10 +1151,9 @@ export default function ConsolidarEscala() {
                             title="Definir função do efetivo"
                             onClick={() => {
                               setFuncModalUid(uid);
-                              // tenta pré-selecionar a chave da função pelo label atual
                               const currentLabel = funcLabel || '';
-                              const entry = Object.entries(funcCatalog).find(([, label]) => label === currentLabel);
-                              setFuncSelectedKey(entry ? entry[0] : '');
+                              const entry = selectedFuncoes.find((label) => label === currentLabel);
+                              setFuncSelectedKey(entry || '');
                             }}
                           >
                             <span className="font-medium text-gray-text">{displayName}</span>
@@ -1186,7 +1211,7 @@ export default function ConsolidarEscala() {
                 {!isCreatingFunc ? (
                   <div className="mb-3">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs text-gray-light">Função pré-cadastrada</label>
+      <label className="text-xs text-gray-light">Funções da missão</label>
                       <button className="text-xs text-primary" type="button" onClick={() => setIsCreatingFunc(true)}>
                         Nova função
                       </button>
@@ -1197,8 +1222,8 @@ export default function ConsolidarEscala() {
                       onChange={(e) => setFuncSelectedKey(e.target.value)}
                     >
                       <option value="">Selecione uma função</option>
-                      {Object.entries(funcCatalog).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
+                      {selectedFuncoes.map((label) => (
+                        <option key={label} value={label}>{label}</option>
                       ))}
                     </select>
                   </div>
@@ -1258,7 +1283,7 @@ export default function ConsolidarEscala() {
                       className="px-3 py-2 bg-primary text-white rounded disabled:opacity-60"
                       onClick={() => {
                         if (!funcModalUid) return;
-                        const label = funcSelectedKey ? (funcCatalog[funcSelectedKey] || '') : '';
+                        const label = funcSelectedKey || '';
                         setFuncoes((f) => ({ ...f, [funcModalUid]: label }));
                         // Persistir no registro de inscrição para reaparecer em futuras edições
                         const effectiveDate = selectedDateIso || date;
