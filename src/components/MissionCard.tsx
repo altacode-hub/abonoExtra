@@ -18,7 +18,7 @@ export interface Mission {
 
 interface MissionCardProps {
   mission: Mission;
-  onToggle?: (missionId: string, isEnrolled: boolean) => void;
+  onToggle?: (missionId: string, isEnrolled: boolean) => Promise<void> | void;
   hideToggle?: boolean;
   children?: React.ReactNode;
   statusBadge?: React.ReactNode;
@@ -26,6 +26,7 @@ interface MissionCardProps {
 
 export const MissionCard: React.FC<MissionCardProps> = ({ mission, onToggle, hideToggle = false, children, statusBadge }) => {
   const [isEnrolled, setIsEnrolled] = useState(mission.inscrito || false);
+  const [sending, setSending] = useState(false);
 
   const [inicio, fim] = useMemo(() => {
     const parts = (mission.horario || '').split('-');
@@ -39,8 +40,21 @@ export const MissionCard: React.FC<MissionCardProps> = ({ mission, onToggle, hid
   const handleToggle = () => {
     const newState = !isEnrolled;
     setIsEnrolled(newState);
-    onToggle?.(mission.id, newState);
+    if (onToggle) {
+      const ret = onToggle(mission.id, newState);
+      if (ret && typeof (ret as any).then === 'function') {
+        setSending(true);
+        (ret as Promise<void>).finally(() => setTimeout(() => setSending(false), 400));
+      } else {
+        setSending(true);
+        setTimeout(() => setSending(false), 400);
+      }
+    }
   };
+
+  React.useEffect(() => {
+    setIsEnrolled(!!mission.inscrito);
+  }, [mission.id, mission.inscrito]);
 
   return (
     <div className={`rounded-lg shadow-card p-4 mb-3 ${mission.inscritoStatus === 'escalado' ? 'bg-success-light' : 'bg-surface'}`}>
@@ -65,13 +79,20 @@ export const MissionCard: React.FC<MissionCardProps> = ({ mission, onToggle, hid
 
         {/* Botão de inscrição alinhado verticalmente ao centro do cartão */}
         {!hideToggle && (
-          <div className="ml-4">
+          <div className="ml-4 flex flex-col items-center">
             <ToggleSwitch
               isOn={isEnrolled}
               onToggle={handleToggle}
               disabled={!mission.disponivel}
               size="md"
             />
+            <div className="mt-1 text-xs text-center">
+              {sending ? (
+                <span className="text-secondary">enviando...</span>
+              ) : isEnrolled ? (
+                <span className="text-success">voluntário</span>
+              ) : null}
+            </div>
           </div>
         )}
       </div>

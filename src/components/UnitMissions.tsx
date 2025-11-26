@@ -235,13 +235,13 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                     }
                     return null;
                   })()}
-                  onToggle={(missionId, enrolled) => {
+                  onToggle={async (missionId, enrolled) => {
                     const user = auth.currentUser;
                     if (!user) return;
                     const dateIso = selectedDate.toISOString().split('T')[0];
                     const basePath = `/units/${unitCode}/inscricoes/${dateIso}/${missionId}/${user.uid}`;
                     if (enrolled) {
-                      set(ref(db, basePath), {
+                      await set(ref(db, basePath), {
                         userId: user.uid,
                         nome: user.displayName || '',
                         email: user.email || '',
@@ -255,7 +255,7 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                         unit: unitCode,
                       });
                     } else {
-                      remove(ref(db, basePath));
+                      await remove(ref(db, basePath));
                     }
                   }}
                 />
@@ -306,12 +306,12 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                 }
                 return null;
               })()}
-              onToggle={(missionId, enrolled) => {
+              onToggle={async (missionId, enrolled) => {
                 const user = auth.currentUser;
                 if (!user) return;
                 const basePath = `/units/${unitCode}/inscricoes/${dateIso}/${missionId}/${user.uid}`;
                 if (enrolled) {
-                  set(ref(db, basePath), {
+                  await set(ref(db, basePath), {
                     userId: user.uid,
                     nome: user.displayName || '',
                     email: user.email || '',
@@ -325,7 +325,7 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                     unit: unitCode,
                   });
                 } else {
-                  remove(ref(db, basePath));
+                  await remove(ref(db, basePath));
                 }
               }}
             />
