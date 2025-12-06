@@ -14,6 +14,7 @@ export default function Controle() {
   const [membersCount, setMembersCount] = useState<number>(0);
   const [servedCount, setServedCount] = useState<number>(0);
   const [memberCounts, setMemberCounts] = useState<Record<string, { name: string; count: number }>>({});
+  const [dailyCounts, setDailyCounts] = useState<Record<string, number>>({});
 
   const initialMonthKey = useMemo(() => {
     const d = new Date();
@@ -61,10 +62,22 @@ export default function Controle() {
     const unsubIdx = onValue(idxRef, (snap) => {
       const byId = snap.val() || {};
       let sum = 0;
+      const counts: Record<string, number> = {};
       Object.values(byId).forEach((d: any) => {
-        sum += Number(d?.efetivoCount || 0);
+        const cnt = Number(d?.efetivoCount || 0);
+        sum += cnt;
+        const ts = Number(d?.inicioTs || d?.fimTs || 0);
+        if (ts) {
+          const dt = new Date(ts);
+          const y = dt.getFullYear();
+          const m = String(dt.getMonth() + 1).padStart(2, '0');
+          const dd = String(dt.getDate()).padStart(2, '0');
+          const key = `${y}-${m}-${dd}`;
+          counts[key] = (counts[key] || 0) + cnt;
+        }
       });
       setTotalEfetivoMes(sum);
+      setDailyCounts(counts);
     });
     const membersRef = ref(db, `/units/${selectedUnit}/members`);
     const unsubMembers = onValue(membersRef, (snap) => {
@@ -114,6 +127,85 @@ export default function Controle() {
     }
     return data;
   }, [memberCounts]);
+
+  const daysInMonth = useMemo(() => {
+    const [yStr, mStr] = monthKey.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return 30;
+    return new Date(y, m, 0).getDate();
+  }, [monthKey]);
+
+  const dailySeries = useMemo(() => {
+    const series: number[] = [];
+    const [yStr, mStr] = monthKey.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dd = String(d).padStart(2, '0');
+      const key = `${y}-${String(m).padStart(2, '0')}-${dd}`;
+      series.push(dailyCounts[key] || 0);
+    }
+    return series;
+  }, [dailyCounts, daysInMonth, monthKey]);
+
+  function BarChart({ values, labels, height = 220, color = '#0EA5E9' }: { values: number[]; labels: string[]; height?: number; color?: string }) {
+    const w = 640;
+    const h = height;
+    const padding = 28;
+    const n = values.length || 0;
+    const max = values.reduce((m, v) => (v > m ? v : m), 0);
+    const innerH = h - padding * 2;
+    const innerW = w - padding * 2;
+    const step = n > 0 ? innerW / n : innerW;
+    const barW = step * 0.7;
+    const toY = (v: number) => (max > 0 ? h - padding - (v / max) * innerH : h - padding);
+    const toX = (i: number) => padding + i * step + step / 2;
+    const xTicks = [1, 8, 15, 22, daysInMonth].filter((d, i, arr) => arr.indexOf(d) === i);
+    const gridY = 4;
+    return (
+      <div className="mt-4">
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} aria-label="Gráfico em colunas">
+          <rect x={padding} y={padding} width={innerW} height={innerH} fill="#F9FAFB" rx={6} />
+          {Array.from({ length: gridY + 1 }).map((_, i) => {
+            const y = padding + (innerH / gridY) * i;
+            return <line key={i} x1={padding} y1={y} x2={w - padding} y2={y} stroke="#E5E7EB" />;
+          })}
+          {xTicks.map((d) => {
+            const idx = Math.min(n - 1, Math.max(0, d - 1));
+            const x = toX(idx);
+            return <line key={`v-${d}`} x1={x} y1={padding} x2={x} y2={h - padding} stroke="#F3F4F6" />;
+          })}
+          {values.map((v, i) => {
+            const x = toX(i) - barW / 2;
+            const y = toY(v);
+            const hh = Math.max(0, h - padding - y);
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={barW} height={hh} fill={color} />
+                <text x={x + barW / 2} y={Math.max(padding + 12, y - 6)} textAnchor="middle" fontSize={11} fill="#374151">
+                  {v}
+                </text>
+              </g>
+            );
+          })}
+          <line x1={padding} y1={h - padding} x2={w - padding} y2={h - padding} stroke="#9CA3AF" />
+          <line x1={padding} y1={padding} x2={padding} y2={h - padding} stroke="#9CA3AF" />
+          {xTicks.map((d) => {
+            const idx = Math.min(n - 1, Math.max(0, d - 1));
+            const x = toX(idx);
+            return (
+              <text key={`xl-${d}`} x={x} y={h - padding + 14} textAnchor="middle" fontSize={11} fill="#6B7280">
+                {d}
+              </text>
+            );
+          })}
+          <text x={padding - 6} y={h - padding + 4} textAnchor="end" fontSize={11} fill="#6B7280">0</text>
+          <text x={padding - 6} y={padding + 4} textAnchor="end" fontSize={11} fill="#6B7280">{max}</text>
+        </svg>
+      </div>
+    );
+  }
 
   function PieChart({ data, size = 160 }: { data: { label: string; value: number; color: string }[]; size?: number }) {
     const total = data.reduce((sum, d) => sum + (d.value || 0), 0);
@@ -198,6 +290,12 @@ export default function Controle() {
             ]}
           />
           <div className="mt-3 text-xs text-gray-light">Cota ({monthKey}): {monthlyQuota} • Cumprido: {quotaProgress}%</div>
+        </section>
+
+        <section className="bg-white border rounded-lg p-6 shadow-card">
+          <h3 className="text-base font-semibold text-gray-text mb-2">Extras por dia (mês {monthKey})</h3>
+          <p className="text-xs text-gray-light mb-3">Quantidade de efetivo escalado por dia.</p>
+          <BarChart values={dailySeries} labels={Array.from({ length: daysInMonth }).map((_, i) => String(i + 1))} />
         </section>
 
         <section className="bg-white border rounded-lg p-6 shadow-card">

@@ -187,7 +187,11 @@ export default function Planilha() {
             return diaA - diaB;
           })
         }))
-        .sort((a, b) => a.nome.localeCompare(b.nome));
+        .sort((a, b) => {
+          const an = (a.nomeCompleto || a.nome || '').toString();
+          const bn = (b.nomeCompleto || b.nome || '').toString();
+          return an.localeCompare(bn, 'pt-BR', { sensitivity: 'base' });
+        });
 
       setEfetivoEscalado(efetivoArray);
     } catch (error) {
@@ -404,7 +408,7 @@ export default function Planilha() {
           const valorGrupo = qtdDias * VALOR_POR_DIA;
           
           const row = [];
-          row.push( efetivo.nomeCompleto || efetivo.nome); // Nome completo em cada linha
+          row.push( (efetivo.nomeCompleto || efetivo.nome || '').toUpperCase()); // Nome em CAIXA ALTA em cada linha
           row.push( efetivo.cpf || ''); // CPF em cada linha
           row.push( efetivo.matriculaFuncional || ''); // Matrícula funcional em cada linha
           

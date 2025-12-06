@@ -102,17 +102,29 @@ export default function ConsolidarEscala() {
     } catch {}
   };
   const normalizeRG = (s?: string) => (s ? String(s).replace(/\D/g, '') : '');
+  const normalizeText = (s?: string) => {
+    if (!s) return '';
+    return String(s)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  };
 
   const localSearchByRG = (query: string) => {
-    const q = normalizeRG(query);
-    if (!q) {
+    const qDigits = normalizeRG(query);
+    const qName = normalizeText(query);
+    if (!qDigits && !qName) {
       setSearchResults({});
       return;
     }
     const cache = loadCache();
     const results: Record<string, { nome?: string; email?: string }> = {};
     Object.entries(cache).forEach(([uid, info]) => {
-      if (info.rg && info.rg.includes(q)) {
+      const nomeNorm = normalizeText(info.nome);
+      const hasRgMatch = qDigits && info.rg ? info.rg.includes(qDigits) : false;
+      const hasNameMatch = qName && nomeNorm ? nomeNorm.includes(qName) : false;
+      if (hasRgMatch || hasNameMatch) {
         results[uid] = { nome: info.nome || uid, email: info.email || '' };
       }
     });
@@ -650,8 +662,8 @@ export default function ConsolidarEscala() {
     setHasClickedSearch(true);
     setSearchResults({});
     try {
-      // Normaliza o RG da consulta para apenas dígitos
-      const normQuery = normalizeRG(rgQuery);
+      const normQueryDigits = normalizeRG(rgQuery);
+      const normQueryName = normalizeText(rgQuery);
       const membersSnap = await get(ref(db, `/units/${unit}/members`));
       const members = membersSnap.val() || {};
       const results: Record<string, { nome?: string; email?: string }> = {};
@@ -662,16 +674,20 @@ export default function ConsolidarEscala() {
           const prof = pSnap.val() || {};
           // Normaliza o RG do perfil para comparação robusta
           const normProfRg = normalizeRG(prof?.rg);
+          const profNome = prof?.nomeGuerra || prof?.nomeCompleto || uid;
+          const profNomeNorm = normalizeText(profNome);
           // Atualiza cache local com dados do membro
           if (normProfRg) {
             cache[uid] = {
               rg: normProfRg,
-              nome: prof?.nomeGuerra || prof?.nomeCompleto || uid,
+              nome: profNome,
               email: prof?.email || '',
             };
           }
-          if (normProfRg && normProfRg === normQuery) {
-            results[uid] = { nome: prof?.nomeGuerra || prof?.nomeCompleto || uid, email: prof?.email || '' };
+          const hasRgMatch = normQueryDigits && normProfRg ? normProfRg.includes(normQueryDigits) : false;
+          const hasNameMatch = normQueryName && profNomeNorm ? profNomeNorm.includes(normQueryName) : false;
+          if (hasRgMatch || hasNameMatch) {
+            results[uid] = { nome: profNome, email: prof?.email || '' };
           }
         } catch {
           // sem permissão
