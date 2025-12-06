@@ -34,7 +34,6 @@ export default function ConsolidarEscala() {
   const [previousStatus, setPreviousStatus] = useState<Record<string, string>>({});
   const [funcoes, setFuncoes] = useState<Record<string, string>>({});
   const [funcModalUid, setFuncModalUid] = useState<string | null>(null);
-  const [funcCatalog, setFuncCatalog] = useState<Record<string, string>>({});
   const [funcSelectedKey, setFuncSelectedKey] = useState<string>('');
   const [newFuncLabel, setNewFuncLabel] = useState<string>('');
   const [savingNewFunc, setSavingNewFunc] = useState<boolean>(false);
@@ -43,7 +42,16 @@ export default function ConsolidarEscala() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Record<string, { nome?: string; email?: string }>>({});
   const [hasClickedSearch, setHasClickedSearch] = useState(false);
-  const [profiles, setProfiles] = useState<Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }>>({});
+  const [profiles, setProfiles] = useState<Record<string, { 
+    nomeGuerra?: string; 
+    nomeCompleto?: string; 
+    email?: string; 
+    phone?: string;
+    rg?: string;
+    cpf?: string;
+    matriculaFuncional?: string;
+    mf?: string;
+  }>>({});
   const [existingEscalas, setExistingEscalas] = useState<Set<string>>(new Set());
   const [missionForm, setMissionForm] = useState<{ titulo: string; referencia?: string; local?: string; tipo?: string; horario?: string }>({
     titulo: '',
@@ -56,9 +64,15 @@ export default function ConsolidarEscala() {
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [selectedDateIso, setSelectedDateIso] = useState<string>('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(missionId || 'manual');
+  const [funcaoIndex, setFuncaoIndex] = useState<number>(0);
+  const [sortPrevOrder, setSortPrevOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortNeverOrder, setSortNeverOrder] = useState<'asc' | 'desc'>('desc');
+  const [extrasCountByUid, setExtrasCountByUid] = useState<Record<string, number>>({});
   const [templates, setTemplates] = useState<Record<string, {
     titulo: string;
     referencias?: string[];
+    funcoes?: string[];
+    funcoesByRef?: Record<string, string[]>;
     inicio?: string;
     fim?: string;
     repetir?: boolean;
@@ -88,17 +102,29 @@ export default function ConsolidarEscala() {
     } catch {}
   };
   const normalizeRG = (s?: string) => (s ? String(s).replace(/\D/g, '') : '');
+  const normalizeText = (s?: string) => {
+    if (!s) return '';
+    return String(s)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  };
 
   const localSearchByRG = (query: string) => {
-    const q = normalizeRG(query);
-    if (!q) {
+    const qDigits = normalizeRG(query);
+    const qName = normalizeText(query);
+    if (!qDigits && !qName) {
       setSearchResults({});
       return;
     }
     const cache = loadCache();
     const results: Record<string, { nome?: string; email?: string }> = {};
     Object.entries(cache).forEach(([uid, info]) => {
-      if (info.rg && info.rg.includes(q)) {
+      const nomeNorm = normalizeText(info.nome);
+      const hasRgMatch = qDigits && info.rg ? info.rg.includes(qDigits) : false;
+      const hasNameMatch = qName && nomeNorm ? nomeNorm.includes(qName) : false;
+      if (hasRgMatch || hasNameMatch) {
         results[uid] = { nome: info.nome || uid, email: info.email || '' };
       }
     });
@@ -163,16 +189,7 @@ export default function ConsolidarEscala() {
     return () => unsub();
   }, [unit]);
 
-  // Carrega catálogo de funções pré-cadastradas na Configuração
-  useEffect(() => {
-    if (!unit) {
-      setFuncCatalog({});
-      return;
-    }
-    const r = ref(db, `/units/${unit}/settings/funcoes`);
-    const unsub = onValue(r, (snap) => setFuncCatalog(snap.val() || {}));
-    return () => unsub();
-  }, [unit]);
+  // Catálogo de funções via missionTemplates (elimina dependência de /settings/funcoes)
 
   const slugify = (s: string) => (s || '')
     .toLowerCase()
@@ -183,13 +200,31 @@ export default function ConsolidarEscala() {
   const addFuncaoInline = async () => {
     const label = newFuncLabel.trim();
     if (!unit || !label) return;
-    const key = slugify(label);
     setSavingNewFunc(true);
     try {
-      await update(ref(db, `/units/${unit}/settings/funcoes`), { [key]: label });
-      setFuncSelectedKey(key);
+      setFuncSelectedKey(label);
       setNewFuncLabel('');
       setIsCreatingFunc(false);
+
+      // Persistir função ligada à missão (por referência), quando houver template selecionado
+      const sample: any = Object.values(volunteersMap)[0] || {};
+      const missionRefLabel = (missionForm.referencia || sample.referencia || sample.local || '').trim();
+      const hasTemplate = selectedTemplateId && selectedTemplateId !== 'manual';
+      if (hasTemplate && missionRefLabel) {
+        const tplKey = selectedTemplateId.includes('::')
+          ? selectedTemplateId.split('::')[0]
+          : (selectedTemplateId.includes(':') ? selectedTemplateId.split(':')[0] : selectedTemplateId);
+        // Adiciona no array global de funções do template
+        const funcoesPath = `/units/${unit}/missionTemplates/${tplKey}/funcoes`;
+        try {
+          const snapF = await get(ref(db, funcoesPath));
+          const prevF = snapF.val() || [];
+          const arrF = Array.isArray(prevF) ? prevF : Object.values(prevF || {});
+          if (!arrF.includes(label)) {
+            await set(ref(db, funcoesPath), [...arrF, label]);
+          }
+        } catch {}
+      }
     } finally {
       setSavingNewFunc(false);
     }
@@ -267,6 +302,71 @@ export default function ConsolidarEscala() {
     return availableTemplates.find((t) => `${t.id}::${t.referencia || ''}` === key) || null;
   }, [availableTemplates, selectedTemplateId]);
 
+  const selectedFuncoes = useMemo(() => {
+    if (!selectedTemplateId) return [] as string[];
+    const sample: any = Object.values(volunteersMap)[0] || {};
+    const missionRefLabel = (missionForm.referencia || sample.referencia || sample.local || '').trim();
+    if (selectedTemplateId === 'manual') return [] as string[];
+    const tplKey = selectedTemplateId.includes('::')
+      ? selectedTemplateId.split('::')[0]
+      : (selectedTemplateId.includes(':') ? selectedTemplateId.split(':')[0] : selectedTemplateId);
+    const tpl = templates[tplKey];
+    const byRef = (tpl?.funcoesByRef && missionRefLabel) ? (tpl.funcoesByRef[missionRefLabel] || []) : [];
+    if ((byRef || []).length > 0) return (byRef || []).filter((f) => !!f);
+    const fromTpl = (tpl?.funcoes || []).filter((f) => !!f);
+    return fromTpl;
+  }, [selectedTemplateId, templates, missionForm.referencia, volunteersMap]);
+
+  const usedFuncoes = useMemo(() => {
+    const used = new Set<string>();
+    Object.keys(selected).forEach((uid) => {
+      if (!selected[uid]) return;
+      const label = (funcoes[uid] || volunteersMap[uid]?.funcao || '').trim();
+      if (label) used.add(label);
+    });
+    return used;
+  }, [selected, funcoes, volunteersMap]);
+
+  const availableFuncoes = useMemo(() => {
+    return selectedFuncoes.filter((f) => !usedFuncoes.has(f));
+  }, [selectedFuncoes, usedFuncoes]);
+
+  useEffect(() => {
+    setFuncaoIndex(0);
+  }, [selectedTemplateId]);
+
+  const currentFunc = useMemo(() => {
+    return availableFuncoes[funcaoIndex] || '';
+  }, [availableFuncoes, funcaoIndex]);
+
+  useEffect(() => {
+    if (funcaoIndex >= availableFuncoes.length) setFuncaoIndex(0);
+  }, [availableFuncoes, funcaoIndex]);
+
+  const prevList = useMemo(() => {
+    if (!currentFunc) return [] as Array<[string, any]>;
+    const entries = Object.entries(volunteersMap).filter(([uid]) => !selected[uid]);
+    const prev = entries.filter(([, e]) => (e as any)?.funcao === currentFunc);
+    const sorter = (a: [string, any], b: [string, any]) => {
+      const ca = extrasCountByUid[a[0]] || 0;
+      const cb = extrasCountByUid[b[0]] || 0;
+      return sortPrevOrder === 'desc' ? cb - ca : ca - cb;
+    };
+    return prev.sort(sorter);
+  }, [volunteersMap, selected, currentFunc, extrasCountByUid, sortPrevOrder]);
+
+  const neverList = useMemo(() => {
+    if (!currentFunc) return [] as Array<[string, any]>;
+    const entries = Object.entries(volunteersMap).filter(([uid]) => !selected[uid]);
+    const never = entries.filter(([, e]) => (e as any)?.funcao !== currentFunc);
+    const sorter = (a: [string, any], b: [string, any]) => {
+      const ca = extrasCountByUid[a[0]] || 0;
+      const cb = extrasCountByUid[b[0]] || 0;
+      return sortNeverOrder === 'desc' ? cb - ca : ca - cb;
+    };
+    return never.sort(sorter);
+  }, [volunteersMap, selected, currentFunc, extrasCountByUid, sortNeverOrder]);
+
   // Carrega perfis para exibir nome de guerra dos voluntários listados e telefone
   useEffect(() => {
     const uids = Object.keys(volunteersMap);
@@ -276,7 +376,15 @@ export default function ConsolidarEscala() {
     }
     let cancelled = false;
     (async () => {
-      const entries: Record<string, { nomeGuerra?: string; nomeCompleto?: string; email?: string; phone?: string }> = {};
+      const entries: Record<string, { 
+        nomeGuerra?: string; 
+        nomeCompleto?: string; 
+        email?: string; 
+        phone?: string;
+        rg?: string;
+        cpf?: string;
+        matriculaFuncional?: string;
+      }> = {};
       await Promise.all(
         uids.map(async (uid) => {
           try {
@@ -286,7 +394,15 @@ export default function ConsolidarEscala() {
             const digits = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '') : '';
             // Garante formato E.164 BR (prefixo 55)
             const phone = digits ? (digits.startsWith('55') ? digits : `55${digits}`) : '';
-            entries[uid] = { nomeGuerra: p?.nomeGuerra, nomeCompleto: p?.nomeCompleto, email: p?.email, phone };
+            entries[uid] = { 
+              nomeGuerra: p?.nomeGuerra, 
+              nomeCompleto: p?.nomeCompleto, 
+              email: p?.email, 
+              phone,
+              rg: p?.rg,
+              cpf: p?.cpf,
+              matriculaFuncional: p?.matriculaFuncional || p?.mf || '',
+            };
           } catch {
             // ignore erros de permissão
           }
@@ -387,6 +503,37 @@ export default function ConsolidarEscala() {
     }
     return iso;
   };
+
+  useEffect(() => {
+    const effectiveDate = selectedDateIso || date;
+    const monthKey = (effectiveDate || '').slice(0, 7);
+    if (!unit || !monthKey) {
+      setExtrasCountByUid({});
+      return;
+    }
+    const uids = new Set<string>();
+    Object.keys(volunteersMap).forEach((uid) => uids.add(uid));
+    Object.keys(searchResults).forEach((uid) => uids.add(uid));
+    if (uids.size === 0) {
+      setExtrasCountByUid({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, number> = {};
+      for (const uid of Array.from(uids)) {
+        try {
+          const snap = await get(ref(db, `/userEscalas/${uid}/${monthKey}`));
+          const val = snap.val() || {};
+          next[uid] = Object.keys(val).length;
+        } catch {
+          next[uid] = 0;
+        }
+      }
+      if (!cancelled) setExtrasCountByUid(next);
+    })();
+    return () => { cancelled = true; };
+  }, [unit, selectedDateIso, date, volunteersMap, searchResults]);
 
   const finalize = async () => {
     const effectiveDate = selectedDateIso || date;
@@ -515,8 +662,8 @@ export default function ConsolidarEscala() {
     setHasClickedSearch(true);
     setSearchResults({});
     try {
-      // Normaliza o RG da consulta para apenas dígitos
-      const normQuery = normalizeRG(rgQuery);
+      const normQueryDigits = normalizeRG(rgQuery);
+      const normQueryName = normalizeText(rgQuery);
       const membersSnap = await get(ref(db, `/units/${unit}/members`));
       const members = membersSnap.val() || {};
       const results: Record<string, { nome?: string; email?: string }> = {};
@@ -527,16 +674,20 @@ export default function ConsolidarEscala() {
           const prof = pSnap.val() || {};
           // Normaliza o RG do perfil para comparação robusta
           const normProfRg = normalizeRG(prof?.rg);
+          const profNome = prof?.nomeGuerra || prof?.nomeCompleto || uid;
+          const profNomeNorm = normalizeText(profNome);
           // Atualiza cache local com dados do membro
           if (normProfRg) {
             cache[uid] = {
               rg: normProfRg,
-              nome: prof?.nomeGuerra || prof?.nomeCompleto || uid,
+              nome: profNome,
               email: prof?.email || '',
             };
           }
-          if (normProfRg && normProfRg === normQuery) {
-            results[uid] = { nome: prof?.nomeGuerra || prof?.nomeCompleto || uid, email: prof?.email || '' };
+          const hasRgMatch = normQueryDigits && normProfRg ? normProfRg.includes(normQueryDigits) : false;
+          const hasNameMatch = normQueryName && profNomeNorm ? profNomeNorm.includes(normQueryName) : false;
+          if (hasRgMatch || hasNameMatch) {
+            results[uid] = { nome: profNome, email: prof?.email || '' };
           }
         } catch {
           // sem permissão
@@ -776,7 +927,23 @@ export default function ConsolidarEscala() {
         {/* Passo 4 — selecionar efetivo */}
         {wizardStep === 4 && (
         <section className="bg-white border rounded-lg p-4 shadow-card">
-          <h3 className="text-md font-medium text-gray-text mb-2">Selecionar efetivo</h3>
+          <h3 className="text-md font-medium text-gray-text mb-2">Selecionar efetivo por função</h3>
+          {availableFuncoes.length > 0 && (
+            <div className="mb-3">
+              <div className="flex flex-wrap gap-2">
+                {availableFuncoes.map((fn, idx) => (
+                  <button
+                    key={`${fn}-${idx}`}
+                    className={`px-3 py-1 rounded border text-sm ${funcaoIndex === idx ? 'bg-primary text-white border-primary' : 'bg-white text-gray-text'}`}
+                    onClick={() => setFuncaoIndex(idx)}
+                    title={fn}
+                  >
+                    {fn}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Busca por RG para adicionar não voluntário */}
           <div className="mb-3 flex items-end gap-2">
@@ -807,12 +974,25 @@ export default function ConsolidarEscala() {
                   <li
                     key={uid}
                     className="py-2 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                    onClick={() => addSelected(uid, info.nome, info.email)}
+                    onClick={() => {
+                      const currentFunc = selectedFuncoes[funcaoIndex];
+                      addSelected(uid, info.nome, info.email);
+                      if (currentFunc) {
+                        setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                        const effectiveDate = selectedDateIso || date;
+                        const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                          ? selectedTemplateId.split('::')[0]
+                          : (missionId || selectedTemplateId);
+                        if (unit && effectiveDate && effectiveMission) {
+                          set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                        }
+                      }
+                    }}
                     title="Adicionar ao efetivo escalado"
                   >
                     <div>
                       <div className="font-medium">{info.nome || uid}</div>
-                      {info.email && <div className="text-sm text-gray-light">{info.email}</div>}
+                      <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
                     </div>
                     <span className="text-xs text-secondary">Adicionar</span>
                   </li>
@@ -826,20 +1006,115 @@ export default function ConsolidarEscala() {
 
           {totalVolunteers === 0 ? (
             <p className="text-sm text-gray-light">Nenhum voluntário inscrito nesta escala.</p>
+          ) : availableFuncoes.length > 0 ? (
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-text">Já escalados nessa função</span>
+                  <button
+                    type="button"
+                    className="p-2 border rounded"
+                    title={sortPrevOrder === 'desc' ? 'Ordenar por menos extras' : 'Ordenar por mais extras'}
+                    onClick={() => setSortPrevOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                  >
+                    {sortPrevOrder === 'desc' ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h10v2H7V6zm0 5h7v2H7v-2zm0 5h4v2H7v-2z"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h4v2H7V6zm0 5h7v2H7v-2zm0 5h10v2H7v-2z"/></svg>
+                    )}
+                  </button>
+                </div>
+                <ul className="divide-y">
+                  {prevList.map(([uid, v]) => (
+                    <li
+                      key={uid}
+                      className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                      onClick={() => {
+                        addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                        if (currentFunc) {
+                          setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                          const effectiveDate = selectedDateIso || date;
+                          const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                            ? selectedTemplateId.split('::')[0]
+                            : (missionId || selectedTemplateId);
+                          if (unit && effectiveDate && effectiveMission) {
+                            set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                          }
+                        }
+                      }}
+                      title="Adicionar ao efetivo escalado"
+                    >
+                      <div>
+                        <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                        <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
+                      </div>
+                      <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-text">Nunca escalados nessa função</span>
+                  <button
+                    type="button"
+                    className="p-2 border rounded"
+                    title={sortNeverOrder === 'desc' ? 'Ordenar por menos extras' : 'Ordenar por mais extras'}
+                    onClick={() => setSortNeverOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                  >
+                    {sortNeverOrder === 'desc' ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h10v2H7V6zm0 5h7v2H7v-2zm0 5h4v2H7v-2z"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 6h4v2H7V6zm0 5h7v2H7v-2zm0 5h10v2H7v-2z"/></svg>
+                    )}
+                  </button>
+                </div>
+                <ul className="divide-y">
+                  {neverList.map(([uid, v]) => (
+                    <li
+                      key={uid}
+                      className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                      onClick={() => {
+                        addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                        if (currentFunc) {
+                          setFuncoes((f) => ({ ...f, [uid]: currentFunc }));
+                          const effectiveDate = selectedDateIso || date;
+                          const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                            ? selectedTemplateId.split('::')[0]
+                            : (missionId || selectedTemplateId);
+                          if (unit && effectiveDate && effectiveMission) {
+                            set(ref(db, `/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}/funcao`), currentFunc).catch(() => {});
+                          }
+                        }
+                      }}
+                      title="Adicionar ao efetivo escalado"
+                    >
+                      <div>
+                        <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                        <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
+                      </div>
+                      <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           ) : (
             <ul className="divide-y">
               {Object.entries(volunteersMap).filter(([uid]) => !selected[uid]).map(([uid, v]) => (
                 <li
                   key={uid}
                   className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                  onClick={() => addSelected(uid, v.nome, v.email)}
+                  onClick={() => {
+                    addSelected(uid, (v as any)?.nome, (v as any)?.email);
+                  }}
                   title="Adicionar ao efetivo escalado"
                 >
                   <div>
-                    <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || v.nome || uid}</div>
-                    {v.email && <div className="text-sm text-gray-light">{v.email}</div>}
+                    <div className="font-medium">{profiles[uid]?.nomeGuerra || profiles[uid]?.nomeCompleto || (v as any)?.nome || uid}</div>
+                    <div className="text-sm text-gray-light">Extras no mês: {extrasCountByUid[uid] || 0}</div>
                   </div>
-                  <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : (v.status || 'voluntario')}</span>
+                  <span className="text-xs text-gray-500">{selected[uid] ? 'selecionado' : ((v as any)?.status || 'voluntario')}</span>
                 </li>
               ))}
             </ul>
@@ -892,10 +1167,9 @@ export default function ConsolidarEscala() {
                             title="Definir função do efetivo"
                             onClick={() => {
                               setFuncModalUid(uid);
-                              // tenta pré-selecionar a chave da função pelo label atual
                               const currentLabel = funcLabel || '';
-                              const entry = Object.entries(funcCatalog).find(([, label]) => label === currentLabel);
-                              setFuncSelectedKey(entry ? entry[0] : '');
+                              const entry = selectedFuncoes.find((label) => label === currentLabel);
+                              setFuncSelectedKey(entry || '');
                             }}
                           >
                             <span className="font-medium text-gray-text">{displayName}</span>
@@ -953,7 +1227,7 @@ export default function ConsolidarEscala() {
                 {!isCreatingFunc ? (
                   <div className="mb-3">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs text-gray-light">Função pré-cadastrada</label>
+      <label className="text-xs text-gray-light">Funções da missão</label>
                       <button className="text-xs text-primary" type="button" onClick={() => setIsCreatingFunc(true)}>
                         Nova função
                       </button>
@@ -964,8 +1238,8 @@ export default function ConsolidarEscala() {
                       onChange={(e) => setFuncSelectedKey(e.target.value)}
                     >
                       <option value="">Selecione uma função</option>
-                      {Object.entries(funcCatalog).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
+                      {selectedFuncoes.map((label) => (
+                        <option key={label} value={label}>{label}</option>
                       ))}
                     </select>
                   </div>
@@ -1025,7 +1299,7 @@ export default function ConsolidarEscala() {
                       className="px-3 py-2 bg-primary text-white rounded disabled:opacity-60"
                       onClick={() => {
                         if (!funcModalUid) return;
-                        const label = funcSelectedKey ? (funcCatalog[funcSelectedKey] || '') : '';
+                        const label = funcSelectedKey || '';
                         setFuncoes((f) => ({ ...f, [funcModalUid]: label }));
                         // Persistir no registro de inscrição para reaparecer em futuras edições
                         const effectiveDate = selectedDateIso || date;

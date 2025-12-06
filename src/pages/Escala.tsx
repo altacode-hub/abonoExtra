@@ -28,6 +28,7 @@ type Enrollment = {
 type MissionTemplate = {
   titulo: string;
   referencias: string[];
+  funcoes?: string[];
   inicio: string; // HH:mm
   fim: string; // HH:mm
   repetir: boolean;
@@ -216,8 +217,8 @@ export default function Escala() {
         });
       });
     });
-    // Ordenação cronológica decrescente (mais tarde primeiro)
-    return list.sort((a, b) => b.inicioMin - a.inicioMin);
+    // Ordenação cronológica crescente (mais cedo primeiro)
+    return list.sort((a, b) => a.inicioMin - b.inicioMin);
   }, [templates, enrollments, dateIso, dow]);
 
   const unitOptions = Object.entries(adminUnits);
