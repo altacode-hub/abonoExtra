@@ -36,6 +36,7 @@ type MissionTemplate = {
   overrides?: { data: string; disponivel: boolean }[]; // YYYY-MM-DD
   local?: string;
   tipo?: string;
+  visivel?: boolean;
 };
 
 type MissionAggregate = {
@@ -48,6 +49,7 @@ type MissionAggregate = {
   volunteers: { uid: string; nome: string; email?: string; status?: string; funcao?: string }[];
   inicioMin: number; // para ordenação
   turno: 'manha' | 'tarde' | 'noite';
+  visivel?: boolean;
 };
 
 export default function Escala() {
@@ -59,6 +61,7 @@ export default function Escala() {
   const [enrollments, setEnrollments] = useState<Record<string, Record<string, Enrollment>>>({});
   const [templates, setTemplates] = useState<Record<string, MissionTemplate>>({});
   const [finalizedEscalas, setFinalizedEscalas] = useState<Set<string>>(new Set());
+  const [editedEscalas, setEditedEscalas] = useState<Set<string>>(new Set());
   const [profilePhones, setProfilePhones] = useState<Record<string, string>>({});
   const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
 
@@ -142,7 +145,7 @@ export default function Escala() {
     return () => unsub();
   }, [selectedUnit, selectedDate]);
 
-  // Carrega índice de escalas finalizadas para o mês atual
+  // Carrega índice de escalas finalizadas para o mês atual (e flag de edição)
   useEffect(() => {
     if (!selectedUnit || !selectedDate) return;
     const y = selectedDate.getFullYear();
@@ -152,6 +155,11 @@ export default function Escala() {
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
       setFinalizedEscalas(new Set(Object.keys(val)));
+      const edited = new Set<string>();
+      Object.entries(val).forEach(([id, info]: any) => {
+        if (info && info.edited === true) edited.add(id);
+      });
+      setEditedEscalas(edited);
     });
     return () => unsub();
   }, [selectedUnit, selectedDate]);
@@ -214,6 +222,7 @@ export default function Escala() {
           volunteers: Object.entries(users).map(([uid, e]) => ({ uid, nome: (e as Enrollment).nome || uid, email: (e as Enrollment).email, status: (e as Enrollment).status, funcao: (e as Enrollment).funcao })),
           inicioMin,
           turno: turnoFromMin(inicioMin),
+          visivel: t.visivel !== false,
         });
       });
     });
@@ -343,6 +352,7 @@ export default function Escala() {
                   const [tid] = m.id.split(':');
                   const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
                   const isFinalizada = finalizedEscalas.has(escalaId);
+                  const isEditada = editedEscalas.has(escalaId);
                   const escalados = m.volunteers.filter((v) => v.status === 'escalado');
                   const escaladosSorted = escalados
                     .slice()
@@ -368,9 +378,20 @@ export default function Escala() {
                       <MissionCard
                         mission={mission}
                         hideToggle
-                        statusBadge={isFinalizada ? (
-                          <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">Escala Finalizada</span>
-                        ) : undefined}
+                        statusBadge={(
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-block text-xs ${m.visivel ? 'text-secondary' : 'text-error'}`}>
+                              {m.visivel ? 'Visível para Voluntários' : 'Não Visível para Voluntários'}
+                            </span>
+                            {isFinalizada && (
+                              isEditada ? (
+                                <span className="inline-block text-white bg-primary rounded px-2 py-1 text-xs">Escala Editada</span>
+                              ) : (
+                                <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">Escala Finalizada</span>
+                              )
+                            )}
+                          </div>
+                        )}
                       >
                         {isFinalizada
                           ? escalados.length > 0 && (

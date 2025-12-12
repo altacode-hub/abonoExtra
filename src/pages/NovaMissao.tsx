@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth, db } from '../services/firebase';
 import { push, ref, set, update, get } from 'firebase/database';
 import PageHeader from '../components/PageHeader';
+import { ToggleSwitch } from '../components/ToggleSwitch';
 
 type MissionTemplate = {
   titulo: string;
@@ -15,6 +16,7 @@ type MissionTemplate = {
   overrides?: { data: string; disponivel: boolean }[];
   local?: string;
   tipo?: string;
+  visivel?: boolean;
 };
 
 export default function NovaMissao() {
@@ -35,6 +37,7 @@ export default function NovaMissao() {
   const [overrides, setOverrides] = useState<{ data: string; disponivel: boolean }[]>([]);
   const [overrideData, setOverrideData] = useState('');
   const [overrideDisponivel, setOverrideDisponivel] = useState(true);
+  const [visivel, setVisivel] = useState(true);
   const [saving, setSaving] = useState(false);
   
   const toMinutes = (hhmm: string) => {
@@ -58,6 +61,7 @@ export default function NovaMissao() {
       setRepetir(!!val.repetir);
       setDiasSemana(val.diasSemana || []);
       setOverrides(val.overrides || []);
+      setVisivel(val.visivel !== false);
     })();
   }, [unitCode, editId]);
 
@@ -95,6 +99,15 @@ export default function NovaMissao() {
     setOverrideDisponivel(true);
   };
 
+  const handleToggleVisivel = async () => {
+    const next = !visivel;
+    setVisivel(next);
+    if (!unitCode || !editId) return;
+    try {
+      await update(ref(db, `/units/${unitCode}/missionTemplates/${editId}`), { visivel: next });
+    } catch {}
+  };
+
   const removeOverride = (idx: number) => {
     setOverrides((prev) => prev.filter((_, i) => i !== idx));
   };
@@ -112,6 +125,7 @@ export default function NovaMissao() {
       repetir,
       diasSemana: repetir ? diasSemana.sort() : [],
       overrides,
+      visivel,
     };
     try {
       if (editId) {
@@ -144,6 +158,17 @@ export default function NovaMissao() {
       <div className="px-4 py-4 flex justify-center">
         <div className="bg-white border rounded-lg p-6 w-full max-w-2xl shadow-card">
           <div className="flex flex-col gap-4">
+            
+            <label className="flex flex-col gap-1">
+              <span className="text-secondary text-sm">Visibilidade na Home</span>
+              <div className="flex items-center justify-between border rounded px-3 py-2">
+                <div className="flex flex-col">
+                  <span className="text-xs text-gray-light">{visivel ? 'Visível para Voluntários' : 'Não Visível para Voluntários'}</span>
+                </div>
+                <ToggleSwitch isOn={visivel} onToggle={handleToggleVisivel} size="md" />
+              </div>
+            </label>
+            
             <label className="flex flex-col gap-1">
               <span className="text-secondary text-sm">Título</span>
               <input className="bg-white border rounded px-3 py-2" value={titulo} onChange={(e) => setTitulo(e.target.value)} />

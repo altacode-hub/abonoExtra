@@ -126,6 +126,7 @@ export const buildEscalaFanout = (
     efetivoCount,
     unitId: unit,
     createdAt: Date.now(),
+    edited: null,
   };
 
   const updates: Record<string, any> = {};
@@ -137,6 +138,7 @@ export const buildEscalaFanout = (
     inicioTs,
     fimTs,
     efetivoCount,
+    edited: null,
   };
   Object.keys(efetivo).forEach((uid) => {
     const baseUserEscala = {

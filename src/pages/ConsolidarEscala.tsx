@@ -80,6 +80,7 @@ export default function ConsolidarEscala() {
     overrides?: { data: string; disponivel: boolean }[];
     local?: string;
     tipo?: string;
+    visivel?: boolean;
   }>>({});
   const [unitTitle, setUnitTitle] = useState<string>('');
   const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
@@ -576,6 +577,7 @@ export default function ConsolidarEscala() {
     const referencia = missionForm.referencia || missionForm.local || missionMeta.referencia || missionMeta.local || '';
     const local = missionForm.local || missionMeta.local || '';
     const efetivo = buildEfetivo(selected, volunteersMap as any, extraAdditions as any, profiles as any, funcoes);
+    const monthKey = (effectiveDate || '').slice(0, 7);
     const escalaUpdates = buildEscalaFanout(unit, effectiveDate, escalaId, titulo, referencia, local, inicioTs, fimTs, efetivo, inicio, fim);
     Object.assign(updates, escalaUpdates);
     await update(ref(db), updates);
@@ -606,6 +608,7 @@ export default function ConsolidarEscala() {
       };
     }
     await update(ref(db), updates);
+    await markEditedIfFinalized().catch(() => {});
   };
 
   const persistRemove = async (uid: string) => {
@@ -623,6 +626,32 @@ export default function ConsolidarEscala() {
       updates[`/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}`] = null;
     }
     await update(ref(db), updates);
+    await markEditedIfFinalized().catch(() => {});
+  };
+
+  const markEditedIfFinalized = async () => {
+    const effectiveDate = selectedDateIso || date;
+    const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+      ? selectedTemplateId.split('::')[0]
+      : (missionId || selectedTemplateId);
+    if (!unit || !effectiveDate || !effectiveMission) return;
+    const escalaId = makeEscalaId(
+      effectiveDate,
+      effectiveMission,
+      missionForm.referencia || missionMeta.referencia,
+      missionForm.local || missionMeta.local
+    );
+    const monthKey = (effectiveDate || '').slice(0, 7);
+    const indexPath = `/units/${unit}/escalasIndex/${monthKey}/${escalaId}`;
+    try {
+      const snap = await get(ref(db, indexPath));
+      if (snap.exists()) {
+        const updates: Record<string, any> = {};
+        updates[`${indexPath}/edited`] = true;
+        updates[`/units/${unit}/escalas/${monthKey}/${escalaId}/edited`] = true;
+        await update(ref(db), updates);
+      }
+    } catch {}
   };
 
   const addSelected = (uid: string, nome?: string, email?: string) => {
