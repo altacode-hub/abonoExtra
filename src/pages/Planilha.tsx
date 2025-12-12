@@ -35,6 +35,12 @@ interface SpreadsheetHeader {
   };
 }
 
+interface MissionsHeader {
+  leftImageUrl?: string;
+  rightImageUrl?: string;
+  centerLines?: string[];
+}
+
 export default function Planilha() {
   const [formData, setFormData] = useState({
     dataInicial: '',
@@ -45,6 +51,7 @@ export default function Planilha() {
   const [userUnits, setUserUnits] = useState<UnitOption[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [spreadsheetHeader, setSpreadsheetHeader] = useState<SpreadsheetHeader>({});
+  const [missionsHeader, setMissionsHeader] = useState<MissionsHeader>({});
 
   // Carregar unidades do usuário admin local
   useEffect(() => {
@@ -88,6 +95,7 @@ export default function Planilha() {
   useEffect(() => {
     if (!formData.unidade) {
       setSpreadsheetHeader({});
+      setMissionsHeader({});
       return;
     }
     const headerRef = ref(db, `/units/${formData.unidade}/settings/spreadsheetHeader`);
@@ -95,7 +103,12 @@ export default function Planilha() {
       const data = snapshot.val() || {};
       setSpreadsheetHeader(data);
     });
-    return () => unsub();
+    const missionsRef = ref(db, `/units/${formData.unidade}/settings/missionsHeader`);
+    const unsub2 = onValue(missionsRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      setMissionsHeader(data);
+    });
+    return () => { unsub(); unsub2(); };
   }, [formData.unidade]);
 
   const [efetivoEscalado, setEfetivoEscalado] = useState<EfetivoEscalado[]>([]);
@@ -262,6 +275,39 @@ export default function Planilha() {
     return currentY + headerBoxHeight;
   };
 
+  const drawHeaderMissions = (
+    doc: jsPDF,
+    pageWidth: number,
+    marginLeft: number,
+    marginRight: number,
+    marginTop: number,
+    leftImage?: { dataUrl?: string; format: 'PNG' | 'JPEG' },
+    rightImage?: { dataUrl?: string; format: 'PNG' | 'JPEG' }
+  ) => {
+    const contentWidth = pageWidth - marginLeft - marginRight;
+    let currentY = marginTop;
+    const imgW = 22;
+    const imgH = 22;
+    if (leftImage?.dataUrl) {
+      doc.addImage(leftImage.dataUrl as any, leftImage.format, marginLeft, currentY, imgW, imgH);
+    }
+    if (rightImage?.dataUrl) {
+      doc.addImage(rightImage.dataUrl as any, rightImage.format, pageWidth - marginRight - imgW, currentY, imgW, imgH);
+    }
+    const lines = Array.isArray(missionsHeader.centerLines) ? missionsHeader.centerLines : [];
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(10);
+    lines.forEach((raw, idx) => {
+      const text = (raw || '').toString().toUpperCase();
+      doc.setFont(undefined, idx === lines.length - 1 ? 'bold' : 'normal');
+      doc.text(text, marginLeft + contentWidth / 2, currentY + 5 + idx * 5, { align: 'center' });
+    });
+    const lastY = currentY + 5 + (lines.length ? (lines.length - 1) * 5 : 0) + 4;
+    doc.setDrawColor(0, 0, 0);
+    doc.line(marginLeft, lastY, pageWidth - marginRight, lastY);
+    return lastY + 2;
+  };
+
   // Função auxiliar para desenhar o rodapé em cada página
   const drawFooter = (doc: jsPDF, pageWidth: number, pageHeight: number, marginLeft: number, marginRight: number, currentPage: number, totalPages: number, totalDias: number, totalValor: number) => {
     const contentWidth = pageWidth - marginLeft - marginRight;
@@ -332,6 +378,8 @@ export default function Planilha() {
       const contentWidth = pageWidth - marginLeft - marginRight;
       console.log('[PDF] Iniciando resolução da imagem do cabeçalho', spreadsheetHeader.imagemUrl);
       let headerImageData: { imgEl?: HTMLImageElement; dataUrl?: string; format: 'PNG' | 'JPEG' } | undefined;
+      let leftImg: { dataUrl?: string; format: 'PNG' | 'JPEG' } | undefined;
+      let rightImg: { dataUrl?: string; format: 'PNG' | 'JPEG' } | undefined;
       if (spreadsheetHeader.imagemUrl) {
         try {
           const storage = getStorage();
@@ -387,6 +435,50 @@ export default function Planilha() {
           console.log('[PDF] Erro geral ao resolver imagem', e);
         }
       }
+      const storage = getStorage();
+      const resolveStoragePath = (raw: string): string | undefined => {
+        if (!raw) return undefined;
+        if (raw.startsWith('http')) {
+          const idx = raw.indexOf('/o/');
+          if (idx >= 0) {
+            const after = raw.substring(idx + 3);
+            const endQ = after.indexOf('?');
+            const encoded = endQ >= 0 ? after.substring(0, endQ) : after;
+            return decodeURIComponent(encoded);
+          }
+          return undefined;
+        }
+        return raw;
+      };
+      const fetchImage = async (url?: string) => {
+        if (!url) return undefined;
+        const path = resolveStoragePath(url);
+        if (!path) return undefined;
+        const sRef = storageRef(storage, path);
+        let format: 'PNG' | 'JPEG' = path.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG';
+        try {
+          const meta = await getMetadata(sRef);
+          if (meta.contentType?.includes('png')) format = 'PNG';
+          if (meta.contentType?.includes('jpeg') || meta.contentType?.includes('jpg')) format = 'JPEG';
+        } catch {}
+        try {
+          const arrayBuffer = await getBytes(sRef);
+          const uint = new Uint8Array(arrayBuffer);
+          let binary = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < uint.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, Array.from(uint.subarray(i, i + chunk)));
+          }
+          const base64 = btoa(binary);
+          const mime = format === 'PNG' ? 'image/png' : 'image/jpeg';
+          const dataUrl = `data:${mime};base64,${base64}`;
+          return { dataUrl, format } as { dataUrl: string; format: 'PNG' | 'JPEG' };
+        } catch {
+          return undefined;
+        }
+      };
+      leftImg = await fetchImage(missionsHeader.leftImageUrl);
+      rightImg = await fetchImage(missionsHeader.rightImageUrl);
       
       // Calcular totais
       const totalDias = efetivoEscalado.reduce((sum, efetivo) => sum + efetivo.dias.length, 0);
@@ -507,9 +599,13 @@ export default function Planilha() {
         if (currentPage > 1) {
           doc.addPage();
         }
-        
-        console.log('[PDF] addPageWithHeader', { currentPage, totalPages, headerImageDisponivel: !!headerImageData });
-        const headerEndY = drawHeader(doc, pageWidth, marginLeft, marginRight, marginTop, currentPage, totalPages, headerImageData);
+        let headerEndY = marginTop;
+        const useMissions = (Array.isArray(missionsHeader.centerLines) && missionsHeader.centerLines.length > 0) || missionsHeader.leftImageUrl || missionsHeader.rightImageUrl;
+        if (useMissions) {
+          headerEndY = drawHeaderMissions(doc, pageWidth, marginLeft, marginRight, marginTop, leftImg, rightImg);
+        } else {
+          headerEndY = drawHeader(doc, pageWidth, marginLeft, marginRight, marginTop, currentPage, totalPages, headerImageData);
+        }
         
         // Adicionar informações de mês e período
         let currentY = headerEndY + 5;

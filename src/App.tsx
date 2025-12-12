@@ -18,6 +18,8 @@ import Missao from './pages/Missao';
 import NovaMissao from './pages/NovaMissao';
 import MissoesPessoal from './pages/MissoesPessoal';
 import CabecalhoPlanilha from './pages/CabecalhoPlanilha';
+import CabecalhoMissoes from './pages/CabecalhoMissoes';
+import GerarPDF from './pages/GerarPDF';
 
 function App() {
   return (
@@ -121,6 +123,14 @@ function App() {
           }
         />
         <Route
+          path="/configuracao/cabecalho-missoes"
+          element={
+            <ProtectedRoute>
+              <CabecalhoMissoes />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/unidades/nova"
           element={
             <ProtectedRoute>
@@ -157,6 +167,14 @@ function App() {
           element={
             <ProtectedRoute>
               <MissoesPessoal />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/escala/gerar-pdf"
+          element={
+            <ProtectedRoute requireUnitAdmin>
+              <GerarPDF />
             </ProtectedRoute>
           }
         />

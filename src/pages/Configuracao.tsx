@@ -142,12 +142,7 @@ export default function Configuracao() {
         />
 
         {/* Seção de Cabeçalho — Missões */}
-        <CabecalhoMissoesSection
-          value={headers.missoes?.titulo || ''}
-          onChange={(v) => setHeaders({ ...headers, missoes: { titulo: v } })}
-          onSave={saveMissoesHeader}
-          saving={saving}
-        />
+        <CabecalhoMissoesSection />
 
         {/* Seção de Cabeçalho — Planilhas */}
         <CabecalhoPlanilhasSection
