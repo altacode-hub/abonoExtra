@@ -526,7 +526,8 @@ export default function ConsolidarEscala() {
         try {
           const snap = await get(ref(db, `/userEscalas/${uid}/${monthKey}`));
           const val = snap.val() || {};
-          next[uid] = Object.keys(val).length;
+          const count = Object.values(val).filter((entry: any) => (entry?.unitId || '') === unit).length;
+          next[uid] = count;
         } catch {
           next[uid] = 0;
         }
@@ -625,6 +626,14 @@ export default function ConsolidarEscala() {
       // Remover inclusão extra
       updates[`/units/${unit}/inscricoes/${effectiveDate}/${effectiveMission}/${uid}`] = null;
     }
+    const escalaId = makeEscalaId(
+      effectiveDate,
+      effectiveMission,
+      missionForm.referencia || missionMeta.referencia,
+      missionForm.local || missionMeta.local
+    );
+    const monthKey = (effectiveDate || '').slice(0, 7);
+    updates[`/userEscalas/${uid}/${monthKey}/${escalaId}`] = null;
     await update(ref(db), updates);
     await markEditedIfFinalized().catch(() => {});
   };

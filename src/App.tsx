@@ -10,6 +10,7 @@ import Escala from './pages/Escala';
 import ConsolidarEscala from './pages/ConsolidarEscala';
 import Controle from './pages/Controle';
 import Relatorio from './pages/Relatorio';
+import RelatorioEfetivo from './pages/RelatorioEfetivo';
 import Planilha from './pages/Planilha';
 import Configuracao from './pages/Configuracao';
 import NovaUnidade from './pages/NovaUnidade';
@@ -95,6 +96,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Relatorio />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/relatorio/efetivo/:uid"
+          element={
+            <ProtectedRoute>
+              <RelatorioEfetivo />
             </ProtectedRoute>
           }
         />
