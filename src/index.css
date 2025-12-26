@@ -16,6 +16,19 @@ body {
   background: #ffffff;
 }
 
+/* Corrige legibilidade dos formulários em tema escuro */
+@media (prefers-color-scheme: dark) {
+  input,
+  textarea,
+  select {
+    color: #111111;
+    background-color: #ffffff;
+  }
+  *::placeholder {
+    color: #6b7280; /* gray-500 */
+  }
+}
+
 .btn {
   @apply px-3 py-2 rounded transition-colors;
 }

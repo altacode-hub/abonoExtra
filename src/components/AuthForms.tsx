@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '../services/firebase';
+import { auth, googleProvider, db } from '../services/firebase';
+import { get, ref } from 'firebase/database';
 import { strings } from '../i18n/strings';
 
 export default function AuthForms() {
@@ -11,8 +12,17 @@ export default function AuthForms() {
   async function loginWithGoogle() {
     setError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
-      navigate('/');
+      const cred = await signInWithPopup(auth, googleProvider);
+      const uid = cred.user?.uid;
+      if (uid) {
+        const snap = await get(ref(db, `/users/${uid}/profile`));
+        const val = snap.val() || {};
+        const required = ['nomeCompleto', 'nomeGuerra', 'rg', 'cpf', 'mf', 'dataNascimento', 'phone'] as const;
+        const okProfile = required.every((k) => String(val?.[k] || '').trim().length > 0);
+        navigate(okProfile ? '/' : '/perfil');
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       setError(err?.message || 'Erro ao autenticar com Google');
     }

@@ -3,10 +3,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth, db } from '../services/firebase';
 import { push, ref, set, update, get } from 'firebase/database';
 import PageHeader from '../components/PageHeader';
+import { ToggleSwitch } from '../components/ToggleSwitch';
 
 type MissionTemplate = {
   titulo: string;
   referencias: string[];
+  funcoes?: string[];
   inicio: string;
   fim: string;
   repetir: boolean;
@@ -14,6 +16,7 @@ type MissionTemplate = {
   overrides?: { data: string; disponivel: boolean }[];
   local?: string;
   tipo?: string;
+  visivel?: boolean;
 };
 
 export default function NovaMissao() {
@@ -25,6 +28,8 @@ export default function NovaMissao() {
   const [titulo, setTitulo] = useState('');
   const [referencias, setReferencias] = useState<string[]>([]);
   const [novaRef, setNovaRef] = useState('');
+  const [funcoes, setFuncoes] = useState<string[]>([]);
+  const [novaFunc, setNovaFunc] = useState('');
   const [inicio, setInicio] = useState('08:00');
   const [fim, setFim] = useState('12:00');
   const [repetir, setRepetir] = useState(true);
@@ -32,6 +37,7 @@ export default function NovaMissao() {
   const [overrides, setOverrides] = useState<{ data: string; disponivel: boolean }[]>([]);
   const [overrideData, setOverrideData] = useState('');
   const [overrideDisponivel, setOverrideDisponivel] = useState(true);
+  const [visivel, setVisivel] = useState(true);
   const [saving, setSaving] = useState(false);
   
   const toMinutes = (hhmm: string) => {
@@ -49,11 +55,13 @@ export default function NovaMissao() {
       if (!val) return;
       setTitulo(val.titulo || '');
       setReferencias(val.referencias || []);
+      setFuncoes(val.funcoes || []);
       setInicio(val.inicio || '08:00');
       setFim(val.fim || '12:00');
       setRepetir(!!val.repetir);
       setDiasSemana(val.diasSemana || []);
       setOverrides(val.overrides || []);
+      setVisivel(val.visivel !== false);
     })();
   }, [unitCode, editId]);
 
@@ -68,6 +76,17 @@ export default function NovaMissao() {
     setReferencias((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  const addFunc = () => {
+    const f = novaFunc.trim();
+    if (!f) return;
+    setFuncoes((prev) => [...prev, f]);
+    setNovaFunc('');
+  };
+
+  const removeFunc = (idx: number) => {
+    setFuncoes((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const toggleDia = (dia: number) => {
     setDiasSemana((prev) => prev.includes(dia) ? prev.filter((d) => d !== dia) : [...prev, dia]);
   };
@@ -78,6 +97,15 @@ export default function NovaMissao() {
     setOverrides((prev) => [...prev, { data: d, disponivel: overrideDisponivel }]);
     setOverrideData('');
     setOverrideDisponivel(true);
+  };
+
+  const handleToggleVisivel = async () => {
+    const next = !visivel;
+    setVisivel(next);
+    if (!unitCode || !editId) return;
+    try {
+      await update(ref(db, `/units/${unitCode}/missionTemplates/${editId}`), { visivel: next });
+    } catch {}
   };
 
   const removeOverride = (idx: number) => {
@@ -91,11 +119,13 @@ export default function NovaMissao() {
     const payload: MissionTemplate = {
       titulo,
       referencias,
+      funcoes,
       inicio,
       fim,
       repetir,
       diasSemana: repetir ? diasSemana.sort() : [],
       overrides,
+      visivel,
     };
     try {
       if (editId) {
@@ -128,6 +158,17 @@ export default function NovaMissao() {
       <div className="px-4 py-4 flex justify-center">
         <div className="bg-white border rounded-lg p-6 w-full max-w-2xl shadow-card">
           <div className="flex flex-col gap-4">
+            
+            <label className="flex flex-col gap-1">
+              <span className="text-secondary text-sm">Visibilidade na Home</span>
+              <div className="flex items-center justify-between border rounded px-3 py-2">
+                <div className="flex flex-col">
+                  <span className="text-xs text-gray-light">{visivel ? 'Visível para Voluntários' : 'Não Visível para Voluntários'}</span>
+                </div>
+                <ToggleSwitch isOn={visivel} onToggle={handleToggleVisivel} size="md" />
+              </div>
+            </label>
+            
             <label className="flex flex-col gap-1">
               <span className="text-secondary text-sm">Título</span>
               <input className="bg-white border rounded px-3 py-2" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
@@ -145,6 +186,24 @@ export default function NovaMissao() {
                     <li key={`${r}-${idx}`} className="py-2 flex items-center justify-between">
                       <span className="text-gray-text">{r}</span>
                       <button className="text-sm text-red-600 hover:underline" onClick={() => removeRef(idx)}>Remover</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-secondary text-sm">Funções</span>
+              <div className="mt-2">
+                <div className="flex gap-2">
+                  <input className="bg-white border rounded px-3 py-2 flex-1" placeholder="Adicionar função" value={novaFunc} onChange={(e) => setNovaFunc(e.target.value)} />
+                  <button className="px-3 py-2 bg-gray-200 rounded" onClick={addFunc}>Adicionar</button>
+                </div>
+                <ul className="mt-2 divide-y">
+                  {funcoes.map((f, idx) => (
+                    <li key={`${f}-${idx}`} className="py-2 flex items-center justify-between">
+                      <span className="text-gray-text">{f}</span>
+                      <button className="text-sm text-red-600 hover:underline" onClick={() => removeFunc(idx)}>Remover</button>
                     </li>
                   ))}
                 </ul>

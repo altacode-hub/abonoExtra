@@ -1,4 +1,4 @@
-type DaySlot = {
+export type DaySlot = {
   date: string; // ISO
   shifts: { id: string; label: string; available: boolean }[];
 };

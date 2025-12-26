@@ -78,7 +78,7 @@ exports.onInscricaoRequest = (0, https_1.onCall)(async (request) => {
             return { ...current, vagasDisponiveis: current.vagasDisponiveis - 1 };
         }
         return current; // sem alteração => não comita
-    }, { applyLocally: false });
+    }, undefined, false);
     if (!res.committed) {
         return { ok: false, reason: 'vagas-esgotadas' };
     }
@@ -135,7 +135,7 @@ exports.onCancelamento = (0, https_1.onCall)(async (request) => {
         if (!current)
             return current;
         return { ...current, vagasDisponiveis: Math.min(current.vagasTotais, (current.vagasDisponiveis || 0) + 1) };
-    }, { applyLocally: false });
+    }, undefined, false);
     const logRef = db.ref('/logs').push();
     await logRef.set({ acao: 'cancelamento', userId: uid, detalhes: { missaoId, turnoId }, timestamp: Date.now() });
     return { ok: true };
