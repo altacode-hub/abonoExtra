@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { ToggleSwitch } from './ToggleSwitch';
 
 export interface Mission {
@@ -52,7 +52,7 @@ export const MissionCard: React.FC<MissionCardProps> = ({ mission, onToggle, hid
     }
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     setIsEnrolled(!!mission.inscrito);
   }, [mission.id, mission.inscrito]);
 

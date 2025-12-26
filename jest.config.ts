@@ -5,12 +5,18 @@ const config: Config = {
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest',
   },
+  // Treat TS files as ESM to align with package.json "type": "module"
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
+  globals: {
+    'ts-jest': {
+      useESM: true,
+    },
+  },
   moduleNameMapper: {
-    '^react$': '<rootDir>/node_modules/react',
-    '^react-dom$': '<rootDir>/node_modules/react-dom',
     '\\.(css|less|scss)$': '<rootDir>/test/styleMock.js',
   },
   setupFilesAfterEnv: ['<rootDir>/test/jest.setup.ts'],
+  testPathIgnorePatterns: ['<rootDir>/e2e/'],
 };
 
 export default config;
