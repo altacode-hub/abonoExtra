@@ -36,6 +36,7 @@ type MissionTemplate = {
   overrides?: { data: string; disponivel: boolean }[]; // YYYY-MM-DD
   local?: string;
   tipo?: string;
+  visivel?: boolean;
 };
 
 type MissionAggregate = {
@@ -48,6 +49,7 @@ type MissionAggregate = {
   volunteers: { uid: string; nome: string; email?: string; status?: string; funcao?: string }[];
   inicioMin: number; // para ordenação
   turno: 'manha' | 'tarde' | 'noite';
+  visivel?: boolean;
 };
 
 export default function Escala() {
@@ -59,6 +61,7 @@ export default function Escala() {
   const [enrollments, setEnrollments] = useState<Record<string, Record<string, Enrollment>>>({});
   const [templates, setTemplates] = useState<Record<string, MissionTemplate>>({});
   const [finalizedEscalas, setFinalizedEscalas] = useState<Set<string>>(new Set());
+  const [editedEscalas, setEditedEscalas] = useState<Set<string>>(new Set());
   const [profilePhones, setProfilePhones] = useState<Record<string, string>>({});
   const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
 
@@ -142,7 +145,7 @@ export default function Escala() {
     return () => unsub();
   }, [selectedUnit, selectedDate]);
 
-  // Carrega índice de escalas finalizadas para o mês atual
+  // Carrega índice de escalas finalizadas para o mês atual (e flag de edição)
   useEffect(() => {
     if (!selectedUnit || !selectedDate) return;
     const y = selectedDate.getFullYear();
@@ -152,6 +155,11 @@ export default function Escala() {
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
       setFinalizedEscalas(new Set(Object.keys(val)));
+      const edited = new Set<string>();
+      Object.entries(val).forEach(([id, info]: any) => {
+        if (info && info.edited === true) edited.add(id);
+      });
+      setEditedEscalas(edited);
     });
     return () => unsub();
   }, [selectedUnit, selectedDate]);
@@ -214,6 +222,7 @@ export default function Escala() {
           volunteers: Object.entries(users).map(([uid, e]) => ({ uid, nome: (e as Enrollment).nome || uid, email: (e as Enrollment).email, status: (e as Enrollment).status, funcao: (e as Enrollment).funcao })),
           inicioMin,
           turno: turnoFromMin(inicioMin),
+          visivel: t.visivel !== false,
         });
       });
     });
@@ -343,6 +352,7 @@ export default function Escala() {
                   const [tid] = m.id.split(':');
                   const escalaId = makeEscalaId(dateIso, tid, m.referencia, m.local);
                   const isFinalizada = finalizedEscalas.has(escalaId);
+                  const isEditada = editedEscalas.has(escalaId);
                   const escalados = m.volunteers.filter((v) => v.status === 'escalado');
                   const escaladosSorted = escalados
                     .slice()
@@ -368,9 +378,20 @@ export default function Escala() {
                       <MissionCard
                         mission={mission}
                         hideToggle
-                        statusBadge={isFinalizada ? (
-                          <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">Escala Finalizada</span>
-                        ) : undefined}
+                        statusBadge={(
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-block text-xs ${m.visivel ? 'text-secondary' : 'text-error'}`}>
+                              {m.visivel ? 'Visível para Voluntários' : 'Não Visível para Voluntários'}
+                            </span>
+                            {isFinalizada && (
+                              isEditada ? (
+                                <span className="inline-block text-white bg-primary rounded px-2 py-1 text-xs">Escala Editada</span>
+                              ) : (
+                                <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">Escala Finalizada</span>
+                              )
+                            )}
+                          </div>
+                        )}
                       >
                         {isFinalizada
                           ? escalados.length > 0 && (
@@ -440,6 +461,18 @@ export default function Escala() {
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
             <path fillRule="evenodd" d="M12 4.5a.75.75 0 01.75.75v6h6a.75.75 0 010 1.5h-6v6a.75.75 0 01-1.5 0v-6h-6a.75.75 0 010-1.5h6v-6A.75.75 0 0112 4.5z" clipRule="evenodd" />
+          </svg>
+        </button>
+      )}
+      {selectedUnit && adminUnits[selectedUnit] && (
+        <button
+          type="button"
+          aria-label="Gerar PDF da escala"
+          className="fixed bottom-6 right-20 w-12 h-12 rounded-full bg-red-600 text-white flex items-center justify-center shadow-card hover:bg-red-700"
+          onClick={() => navigate(`/escala/gerar-pdf?unit=${selectedUnit}&date=${dateIso}`)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm-1 2 5 5h-5V4Zm-5 7h8v2H8v-2Zm0 4h8v2H8v-2Z" />
           </svg>
         </button>
       )}

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { auth, db } from '../services/firebase';
-import { get, ref, onValue, query, orderByChild, startAt, endAt } from 'firebase/database';
+import { get, ref, onValue } from 'firebase/database';
 
 type UnitMeta = { titulo: string; descricao?: string };
 type EscalaIndex = { titulo?: string; referencia?: string; local?: string; inicioTs?: number; fimTs?: number; efetivoCount?: number };
@@ -40,6 +41,7 @@ function tsOfISO(iso: string, time: 'start' | 'end' = 'start') {
 }
 
 export default function Relatorio() {
+  const navigate = useNavigate();
   const [adminUnits, setAdminUnits] = useState<Record<string, UnitMeta>>({});
   const [selectedUnit, setSelectedUnit] = useState<string>('');
   const [startIso, setStartIso] = useState<string>(() => toISODate(new Date()));
@@ -47,6 +49,7 @@ export default function Relatorio() {
   const [results, setResults] = useState<Array<{ month: string; escalaId: string; data: EscalaIndex }>>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [efetivosAgg, setEfetivosAgg] = useState<Record<string, { nome: string; count: number }>>({});
 
   // Carrega unidades administradas pelo usuário (como em Escala)
   useEffect(() => {
@@ -99,9 +102,7 @@ export default function Relatorio() {
       const acc: Array<{ month: string; escalaId: string; data: EscalaIndex }> = [];
       for (const m of months) {
         const base = ref(db, `/units/${selectedUnit}/escalasIndex/${m}`);
-        // Limitar por faixa de timestamps dentro do mês
-        const q = query(base, orderByChild('inicioTs'), startAt(startTs), endAt(endTs));
-        const snap = await get(q);
+        const snap = await get(base);
         const val = snap.val() || {};
         Object.entries(val).forEach(([escalaId, data]) => {
           const d = data as EscalaIndex;
@@ -137,28 +138,31 @@ export default function Relatorio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startIso, endIso]);
 
-  const exportCSV = () => {
-    const rows = [
-      ['Data', 'Título', 'Referência', 'Local', 'Início', 'Fim', 'Efetivo'],
-      ...results.map((r) => [
-        new Date(r.data.inicioTs || 0).toLocaleDateString('pt-BR'),
-        r.data.titulo || 'Missão',
-        r.data.referencia || '',
-        r.data.local || '',
-        new Date(r.data.inicioTs || 0).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        new Date(r.data.fimTs || 0).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        String(r.data.efetivoCount || 0),
-      ]),
-    ];
-    const csv = rows.map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `relatorio_${selectedUnit}_${startIso}_a_${endIso}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // Agrega efetivos escalados no período a partir dos resultados
+  useEffect(() => {
+    (async () => {
+      if (!selectedUnit || results.length === 0) {
+        setEfetivosAgg({});
+        return;
+      }
+      const next: Record<string, { nome: string; count: number }> = {};
+      const promises = results.map(async ({ month, escalaId }) => {
+        try {
+          const snap = await get(ref(db, `/units/${selectedUnit}/escalas/${month}/${escalaId}/efetivo`));
+          const efetivo = snap.val() || {};
+          Object.entries(efetivo).forEach(([uid, entry]: any) => {
+            const nome = entry?.ng || uid;
+            if (!next[uid]) next[uid] = { nome, count: 0 };
+            next[uid].count += 1;
+          });
+        } catch {}
+      });
+      await Promise.all(promises);
+      setEfetivosAgg(next);
+    })();
+  }, [results, selectedUnit]);
+
+  
 
   return (
     <div className="min-h-screen bg-surface-gray pt-[68px] pb-6">
@@ -198,28 +202,31 @@ export default function Relatorio() {
               />
             </div>
             <div className="flex-1" />
-            <button className="border rounded px-3 py-2 text-sm hover:bg-gray-50" onClick={exportCSV} disabled={results.length === 0}>Exportar CSV</button>
           </div>
           {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
         </section>
 
+
         <section className="bg-white border rounded-lg p-4 shadow-card">
-          <h2 className="text-lg font-semibold text-gray-text mb-3">Resultados</h2>
-          {loading ? (
-            <div className="text-sm text-gray-light">Carregando...</div>
-          ) : results.length === 0 ? (
-            <div className="text-sm text-gray-light">Nenhum registro no período selecionado.</div>
+          <h2 className="text-lg font-semibold text-gray-text mb-3">Efetivos no período</h2>
+          {Object.keys(efetivosAgg).length === 0 ? (
+            <div className="text-sm text-gray-light">Nenhum efetivo escalado no período.</div>
           ) : (
             <ul className="divide-y">
-              {results.map(({ month, escalaId, data }) => (
-                <li key={`${month}/${escalaId}`} className="py-2 flex items-center justify-between">
+              {Object.entries(efetivosAgg)
+                .sort(([, a], [, b]) => new Intl.Collator('pt-BR', { sensitivity: 'base' }).compare(a.nome || '', b.nome || ''))
+                .map(([uid, info]) => (
+                <li
+                  key={uid}
+                  className="py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                  title="Visualizar detalhes do efetivo"
+                  onClick={() => navigate(`/relatorio/efetivo/${uid}?unit=${selectedUnit}&start=${startIso}&end=${endIso}`)}
+                >
                   <div>
-                    <div className="text-sm text-gray-light">{new Date(data.inicioTs || 0).toLocaleDateString('pt-BR')}</div>
-                    <div className="text-gray-text font-semibold">{data.titulo || 'Missão'}</div>
-                    <div className="text-sm text-gray-text">{data.referencia || data.local || ''}</div>
-                    <div className="text-xs text-gray-light">{new Date(data.inicioTs || 0).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} - {new Date(data.fimTs || 0).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div className="font-medium">{info.nome}</div>
+                    <div className="text-sm text-gray-light">Escalado no período: {info.count}</div>
                   </div>
-                  <div className="text-sm text-gray-text">Efetivo: {data.efetivoCount || 0}</div>
+                  <span className="text-xs text-gray-500">detalhes</span>
                 </li>
               ))}
             </ul>

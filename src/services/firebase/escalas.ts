@@ -126,6 +126,7 @@ export const buildEscalaFanout = (
     efetivoCount,
     unitId: unit,
     createdAt: Date.now(),
+    edited: null,
   };
 
   const updates: Record<string, any> = {};
@@ -137,16 +138,21 @@ export const buildEscalaFanout = (
     inicioTs,
     fimTs,
     efetivoCount,
+    edited: null,
   };
   Object.keys(efetivo).forEach((uid) => {
-    updates[`/userEscalas/${uid}/${monthKey}/${escalaId}`] = {
+    const baseUserEscala = {
       unitId: unit,
       titulo,
       referencia,
       local,
       inicioTs,
       fimTs,
-    };
+    } as any;
+    const fu = efetivo[uid]?.funcao;
+    updates[`/userEscalas/${uid}/${monthKey}/${escalaId}`] = fu !== undefined
+      ? { ...baseUserEscala, funcao: fu }
+      : baseUserEscala;
   });
   return updates;
 };

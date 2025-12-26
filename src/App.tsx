@@ -10,6 +10,7 @@ import Escala from './pages/Escala';
 import ConsolidarEscala from './pages/ConsolidarEscala';
 import Controle from './pages/Controle';
 import Relatorio from './pages/Relatorio';
+import RelatorioEfetivo from './pages/RelatorioEfetivo';
 import Planilha from './pages/Planilha';
 import Configuracao from './pages/Configuracao';
 import NovaUnidade from './pages/NovaUnidade';
@@ -18,6 +19,8 @@ import Missao from './pages/Missao';
 import NovaMissao from './pages/NovaMissao';
 import MissoesPessoal from './pages/MissoesPessoal';
 import CabecalhoPlanilha from './pages/CabecalhoPlanilha';
+import CabecalhoMissoes from './pages/CabecalhoMissoes';
+import GerarPDF from './pages/GerarPDF';
 
 function App() {
   return (
@@ -97,6 +100,14 @@ function App() {
           }
         />
         <Route
+          path="/relatorio/efetivo/:uid"
+          element={
+            <ProtectedRoute>
+              <RelatorioEfetivo />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/planilha"
           element={
             <ProtectedRoute>
@@ -117,6 +128,14 @@ function App() {
           element={
             <ProtectedRoute>
               <CabecalhoPlanilha />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/configuracao/cabecalho-missoes"
+          element={
+            <ProtectedRoute>
+              <CabecalhoMissoes />
             </ProtectedRoute>
           }
         />
@@ -157,6 +176,14 @@ function App() {
           element={
             <ProtectedRoute>
               <MissoesPessoal />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/escala/gerar-pdf"
+          element={
+            <ProtectedRoute requireUnitAdmin>
+              <GerarPDF />
             </ProtectedRoute>
           }
         />

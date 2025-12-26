@@ -28,6 +28,7 @@ type MissionTemplate = {
   overrides?: { data: string; disponivel: boolean }[]; // YYYY-MM-DD
   local?: string;
   tipo?: string;
+  visivel?: boolean;
 };
 
 type Props = {
@@ -43,6 +44,7 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
   const [myEnrollments, setMyEnrollments] = useState<Record<string, { status?: string; nome?: string; funcao?: string }>>({});
   const [myProfile, setMyProfile] = useState<{ nomeGuerra?: string; nomeCompleto?: string } | null>(null);
   const [finalizedEscalas, setFinalizedEscalas] = useState<Set<string>>(new Set());
+  const [editedEscalas, setEditedEscalas] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -75,7 +77,7 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
     return `${y}-${m}-${d}`;
   }, [selectedDate]);
 
-  // Índice de escalas finalizadas (por mês)
+  // Índice de escalas finalizadas (por mês) e flag de edição
   useEffect(() => {
     if (!unitCode || !selectedDate) return;
     const y = selectedDate.getFullYear();
@@ -85,6 +87,11 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
       setFinalizedEscalas(new Set(Object.keys(val)));
+      const edited = new Set<string>();
+      Object.entries(val).forEach(([id, info]: any) => {
+        if (info && info.edited === true) edited.add(id);
+      });
+      setEditedEscalas(edited);
     });
     return () => unsub();
   }, [unitCode, selectedDate]);
@@ -137,7 +144,8 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
       const hasOverride = (t.overrides || []).find((o) => o.data === dateIso);
       const availableByDow = t.repetir && (t.diasSemana || []).includes(dow);
       const available = hasOverride ? hasOverride.disponivel : availableByDow;
-      if (!available) return;
+      const visible = t.visivel !== false;
+      if (!available || !visible) return;
       (t.referencias || []).forEach((refLabel, idx) => {
         list.push({
           id: `${tid}:${idx}`,
@@ -225,7 +233,14 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                       );
                     }
                     if (isFinalizada) {
-                      return <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">escala finalizada</span>;
+                      const [tidGuess] = id.split(':');
+                      const escalaId = makeEscalaId(dateIso, tidGuess || id, m.referencia, m.local);
+                      const isEditada = editedEscalas.has(escalaId);
+                      return (
+                        <span className={`inline-block text-white ${isEditada ? 'bg-primary' : 'bg-success'} rounded px-2 py-1 text-xs`}>
+                          {isEditada ? 'escala editada' : 'escala finalizada'}
+                        </span>
+                      );
                     }
                     if (status === 'voluntario') {
                       return <span className="inline-block text-secondary text-xs">você está como voluntário</span>;
@@ -296,7 +311,12 @@ export default function UnitMissions({ unitCode, unitMeta, selectedDate }: Props
                   );
                 }
                 if (isFinalizada) {
-                  return <span className="inline-block text-white bg-success rounded px-2 py-1 text-xs">escala finalizada</span>;
+                  const isEditada = editedEscalas.has(escalaId);
+                  return (
+                    <span className={`inline-block text-white ${isEditada ? 'bg-primary' : 'bg-success'} rounded px-2 py-1 text-xs`}>
+                      {isEditada ? 'escala editada' : 'escala finalizada'}
+                    </span>
+                  );
                 }
                 if (status === 'voluntario') {
                   return <span className="inline-block text-secondary text-xs">você está como voluntário</span>;

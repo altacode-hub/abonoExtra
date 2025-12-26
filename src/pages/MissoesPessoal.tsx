@@ -10,6 +10,7 @@ type EscalaIndex = {
   local?: string;
   inicioTs?: number;
   fimTs?: number;
+  funcao?: string;
 };
 
 type Status = { whatsSent?: boolean; whatsSentTs?: number; ack?: boolean; ackTs?: number };
@@ -19,6 +20,9 @@ export default function MissoesPessoal() {
   const [statuses, setStatuses] = useState<Record<string, Status>>({});
   const [toastMsg, setToastMsg] = useState<string>('');
   const [toastVisible, setToastVisible] = useState<boolean>(false);
+  const [funcoesMap, setFuncoesMap] = useState<Record<string, string>>({});
+  const [escalaDetailsMap, setEscalaDetailsMap] = useState<Record<string, any>>({});
+  const [myProfile, setMyProfile] = useState<{ nomeGuerra?: string; nomeCompleto?: string; rg?: string; mf?: string; matriculaFuncional?: string } | null>(null);
   const uid = auth.currentUser?.uid || '';
 
   // Carrega todas as escalas do usuário em todos os meses
@@ -69,6 +73,64 @@ export default function MissoesPessoal() {
     }));
   }, [items]);
 
+  // Backfill de função a partir da escala quando não existir em userEscalas
+  useEffect(() => {
+    if (!uid) return;
+    const fetchMissingFuncoes = async () => {
+      const promises = items.map(async ({ month, id, data }) => {
+        const key = `${month}/${id}`;
+        if (data.funcao) return { key, funcao: data.funcao };
+        try {
+          const snap = await get(ref(db, `/units/${data.unitId}/escalas/${month}/${id}/efetivo`));
+          const efetivo = snap.val() || {};
+          const f = efetivo[uid]?.funcao || '';
+          return { key, funcao: f };
+        } catch {
+          return { key, funcao: '' };
+        }
+      });
+      const results = await Promise.all(promises);
+      const map: Record<string, string> = {};
+      results.forEach(({ key, funcao }) => { if (funcao) map[key] = funcao; });
+      if (Object.keys(map).length) setFuncoesMap((prev) => ({ ...prev, ...map }));
+    };
+    fetchMissingFuncoes().catch(() => {});
+  }, [items, uid]);
+
+  useEffect(() => {
+    if (!uid) return;
+    const fetchDetails = async () => {
+      const promises = items.map(async ({ month, id, data }) => {
+        const key = `${month}/${id}`;
+        try {
+          const snap = await get(ref(db, `/units/${data.unitId}/escalas/${month}/${id}`));
+          const val = snap.val() || {};
+          return { key, val };
+        } catch {
+          return { key, val: {} };
+        }
+      });
+      const results = await Promise.all(promises);
+      const map: Record<string, any> = {};
+      results.forEach(({ key, val }) => { map[key] = val; });
+      if (Object.keys(map).length) setEscalaDetailsMap((prev) => ({ ...prev, ...map }));
+    };
+    fetchDetails().catch(() => {});
+  }, [items, uid]);
+
+  useEffect(() => {
+    if (!uid) return;
+    (async () => {
+      try {
+        const snap = await get(ref(db, `/users/${uid}/profile`));
+        const val = snap.val() || {};
+        setMyProfile({ nomeGuerra: val?.nomeGuerra, nomeCompleto: val?.nomeCompleto, rg: val?.rg, mf: val?.mf, matriculaFuncional: val?.matriculaFuncional });
+      } catch {
+        setMyProfile(null);
+      }
+    })();
+  }, [uid]);
+
   // Mensagens de WhatsApp removidas desta tela: apenas registro no banco
 
   return (
@@ -78,38 +140,61 @@ export default function MissoesPessoal() {
         {itemsByDay.length === 0 ? (
           <p className="text-sm text-gray-light">Nenhuma missão encontrada para seu usuário.</p>
         ) : (
-          itemsByDay.map(({ month, id, data, dateStr, timeStr }) => (
-            <div key={`${month}/${id}`} className="bg-white border rounded-lg p-4 shadow-card relative">
-              <div className="flex items-center justify-between">
+          itemsByDay.map(({ month, id, data }) => {
+            const key = `${month}/${id}`;
+            const details = escalaDetailsMap[key] || {};
+            const startDate = new Date(data.inicioTs || 0);
+            const endDate = new Date(data.fimTs || 0);
+            const dateStartStr = startDate.toLocaleDateString('pt-BR');
+            const dateEndStr = endDate.toLocaleDateString('pt-BR');
+            const timeStartStr = startDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            const timeEndStr = endDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            const dowStr = startDate.toLocaleDateString('pt-BR', { weekday: 'long' }).toUpperCase();
+            const fx = data.funcao || funcoesMap[key] || '';
+            const efetivoCount = details.efetivoCount || (details.efetivo ? Object.keys(details.efetivo).length : undefined);
+            const missionNumber = `${startDate.getFullYear()}${String(startDate.getMonth() + 1).padStart(2, '0')}${String(startDate.getDate()).padStart(2, '0')}`;
+            const mf = myProfile?.matriculaFuncional || myProfile?.mf || '';
+            const rg = myProfile?.rg || '';
+            const nome = myProfile?.nomeGuerra || myProfile?.nomeCompleto || '';
+            const titulo = (details.titulo || data.titulo || 'Missão');
+            const refLocal = (details.referencia || details.local || data.referencia || data.local || '');
+            const horarioLine = `${timeStartStr} - ${timeEndStr}`;
+            const dataHorarioLine = `${dateStartStr} às ${timeStartStr} até ${dateEndStr} às ${timeEndStr} (${dowStr})`;
+            const bullet = `° ${nome}${rg ? ", RG " + rg : ''}${mf ? ", MF " + mf : ''}${fx ? " - " + fx : ''}`;
+
+            const st = statuses[key] || {};
+            const ackText = st.ackTs ? new Date(st.ackTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+
+            return (
+              <div key={key} className="bg-white border rounded-lg p-4 shadow-card">
                 <div>
-                  <div className="text-sm text-gray-light">{dateStr}</div>
-                  <div className="text-lg font-semibold text-gray-text">{data.titulo || 'Missão'}</div>
-                  <div className="text-sm text-gray-text">{data.referencia || data.local || ''}</div>
-                  <div className="text-xs text-gray-light">{timeStr}</div>
-                </div>
-                {(() => {
-                  const st = statuses[`${month}/${id}`] || {};
-                  const ackText = st.ackTs ? new Date(st.ackTs).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
-                  return (
-                    <div className="flex flex-col items-end gap-1">
-                      {st.ack ? (
-                        <>
-                          <div className="text-xs text-blue-600">Efetivo deu ciente</div>
-                          {ackText ? <div className="text-[11px] text-gray-light">{ackText}</div> : null}
-                        </>
-                      ) : null}
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-gray-text">
+                      {`Missão nº ${missionNumber} - ${titulo}${refLocal ? ' - ' + refLocal : ''}`}
                     </div>
-                  );
-                })()}
+                    <div className="text-sm text-gray-text mt-1">{`Data/horário: ${dataHorarioLine}`}</div>
+                    <div className="text-sm text-gray-text">{`Local: ${details.local || data.local || ''}`}</div>
+                    <div className="text-sm text-gray-text">{`Horário: ${horarioLine}`}</div>
+                    <div className="text-sm text-gray-text mt-2">{`Efetivo Escalado${efetivoCount !== undefined ? ` (${efetivoCount})` : ''}:`}</div>
+                    <div className="text-sm text-gray-text">{bullet}</div>
+                    {st.ack ? (
+                      <div className="mt-2 text-xs text-blue-600">Efetivo deu ciente{ackText ? ` — ${ackText}` : ''}</div>
+                    ) : null}
+                  </div>
+                </div>
+                {!st.ack && (
+                  <div className="mt-3 flex justify-center">
+                    <button
+                      className="px-4 py-2 rounded text-sm bg-primary text-white border border-primary shadow-card-hover hover:bg-primary-dark transition focus:outline-none focus:ring-2 focus:ring-primary"
+                      onClick={() => confirmarCiente(month, id)}
+                    >
+                      Dar ciente
+                    </button>
+                  </div>
+                )}
               </div>
-              <button
-                className="mt-3 px-3 py-2 border rounded text-sm"
-                onClick={() => confirmarCiente(month, id)}
-              >
-                Dar ciente
-              </button>
-            </div>
-          ))
+            );
+          })
         )}
       {toastMsg && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-sm px-4 py-2 rounded shadow-lg transition-opacity duration-300 ${toastVisible ? 'opacity-100' : 'opacity-0'}`}>
