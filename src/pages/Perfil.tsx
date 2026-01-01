@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { onValue, ref, update } from 'firebase/database';
 import { auth, db } from '../services/firebase';
+import { ensureFcmTokenForUserWithStatus } from '../services/firebase/messaging';
 import PageHeader from '../components/PageHeader';
 
 type PerfilData = {
@@ -18,6 +19,10 @@ export default function Perfil() {
   const [perfil, setPerfil] = useState<PerfilData>({});
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [fcmToken, setFcmToken] = useState<string | null>(null);
+  const [fcmRefreshing, setFcmRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [fcmMessage, setFcmMessage] = useState<string | null>(null);
   const required = ['nomeCompleto', 'nomeGuerra', 'rg', 'cpf', 'mf', 'dataNascimento', 'phone'] as const;
   const isComplete = required.every((k) => String((perfil as any)[k] || '').trim().length > 0);
 
@@ -28,6 +33,17 @@ export default function Perfil() {
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
       setPerfil(val);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const r = ref(db, `/users/${uid}/fcmToken`);
+    const unsub = onValue(r, (snap) => {
+      const val = snap.val();
+      setFcmToken(val ? String(val) : null);
     });
     return () => unsub();
   }, []);
@@ -58,6 +74,27 @@ export default function Perfil() {
     }
   };
 
+  const refreshFcm = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    setFcmRefreshing(true);
+    try {
+      const res = await ensureFcmTokenForUserWithStatus();
+      setFcmMessage(res.message || (res.ok ? 'Token atualizado.' : 'Falha ao atualizar token.'));
+    } finally {
+      setFcmRefreshing(false);
+    }
+  };
+
+  const copyFcm = async () => {
+    if (!fcmToken) return;
+    try {
+      await navigator.clipboard.writeText(fcmToken);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+
   return (
     <div className="min-h-screen bg-surface-gray pt-[68px]">
       <PageHeader title="Perfil" />
@@ -86,8 +123,10 @@ export default function Perfil() {
             <label className="flex flex-col gap-1">
               <span className="text-secondary text-sm">CPF</span>
               <input required aria-required className="bg-white border rounded px-3 py-2" value={perfil.cpf || ''} onChange={(e) => setPerfil({ ...perfil, cpf: e.target.value })} />
-            </label>
-          </div>
+          </label>
+        </div>
+
+          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
               <span className="text-secondary text-sm">Matrícula Funcional (MF)</span>
@@ -113,6 +152,24 @@ export default function Perfil() {
                 }}
               />
               <span className="text-xs text-gray-light">Formato E.164 sem símbolos (apenas dígitos).</span>
+              <div className="flex items-center justify-between gap-2 mt-2">
+                <div className="text-xs text-gray-light break-all">FCM Token: {fcmToken || '—'}</div>
+                <button onClick={refreshFcm} aria-label="Atualizar FCM Token" disabled={fcmRefreshing} className="px-2 py-2 bg-primary text-white rounded hover:bg-primary-dark disabled:opacity-60">
+                  {fcmRefreshing ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4 animate-spin"><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4"><path d="M21 12a9 9 0 1 1-3.18-6.82"/><polyline points="21 3 21 12 12 12"/></svg>
+                  )}
+                </button>
+                <button onClick={copyFcm} aria-label="Copiar FCM Token" disabled={!fcmToken} className="px-2 py-2 bg-secondary text-white rounded hover:bg-secondary-dark disabled:opacity-60">
+                  {copied ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  )}
+                </button>
+              </div>
+              {fcmMessage && <div className="text-xs text-yellow-700 mt-1">{fcmMessage}</div>}
             </label>
           </div>
 

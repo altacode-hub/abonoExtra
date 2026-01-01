@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import PageHeader from '../components/PageHeader';
 import { auth, db } from '../services/firebase';
 import { onValue, ref, get } from 'firebase/database';
+import { useNavigate } from 'react-router-dom';
 import { isUnitAdmin } from '../services/rbac';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -42,6 +43,7 @@ interface MissionsHeader {
 }
 
 export default function Planilha() {
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     dataInicial: '',
     dataFinal: '',
@@ -114,6 +116,7 @@ export default function Planilha() {
   const [efetivoEscalado, setEfetivoEscalado] = useState<EfetivoEscalado[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [isLoadingView, setIsLoadingView] = useState(false);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -123,13 +126,15 @@ export default function Planilha() {
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Dados do formulário:', formData);
-    
-    // Buscar efetivo escalado para a unidade e período selecionados
-    if (formData.unidade && formData.dataInicial && formData.dataFinal) {
-      buscarEfetivoEscalado();
+    setIsLoadingView(true);
+    try {
+      if (formData.unidade && formData.dataInicial && formData.dataFinal) {
+        await buscarEfetivoEscalado();
+      }
+    } finally {
+      setIsLoadingView(false);
     }
   };
 
@@ -139,7 +144,23 @@ export default function Planilha() {
     try {
       const inicio = new Date(formData.dataInicial);
       const fim = new Date(formData.dataFinal);
-      const efetivoMap = new Map<string, { nomeCompleto?: string; cpf?: string; matriculaFuncional?: string; dias: string[] }>();
+      const efetivoMap = new Map<string, { nomeCompleto?: string; nome?: string; cpf?: string; matriculaFuncional?: string; dias: string[] }>();
+      const perfilCache = new Map<string, { nomeCompleto?: string; nomeGuerra?: string; cpf?: string; mf?: string }>();
+
+      const readPerfil = async (uid: string) => {
+        if (perfilCache.has(uid)) return perfilCache.get(uid)!;
+        try {
+          const snap = await get(ref(db, `/users/${uid}/profile`));
+          const val = snap.val() || {};
+          const perfil = { nomeCompleto: val.nomeCompleto || '', nomeGuerra: val.nomeGuerra || '', cpf: val.cpf || '', mf: val.mf || '' };
+          perfilCache.set(uid, perfil);
+          return perfil;
+        } catch {
+          const perfil = { nomeCompleto: '', nomeGuerra: '', cpf: '', mf: '' };
+          perfilCache.set(uid, perfil);
+          return perfil;
+        }
+      };
 
       // Buscar escalas para cada mês no período
       let currentDate = new Date(inicio);
@@ -151,34 +172,36 @@ export default function Planilha() {
         if (snapshot.exists()) {
           const escalas = snapshot.val();
           
-          Object.entries(escalas).forEach(([escalaId, escalaData]: [string, any]) => {
+          for (const [escalaId, escalaData] of Object.entries(escalas) as [string, any][]) {
             const escalaDate = new Date(escalaData.inicioTs);
-            
             // Verifica se a escala está dentro do período
             if (escalaDate >= inicio && escalaDate <= fim) {
               const diaMes = `${String(escalaDate.getDate()).padStart(2, '0')}/${String(escalaDate.getMonth() + 1).padStart(2, '0')}`;
-              
               // Processa efetivo da escala
               if (escalaData.efetivo) {
-                Object.entries(escalaData.efetivo).forEach(([uid, efetivo]: [string, any]) => {
-                  const nome = efetivo.ng || 'Nome não informado';
-                  const existing = efetivoMap.get(nome) || { dias: [] };
-                  
-                  // Atualiza ou cria novo registro com dados completos
-                  if (!efetivoMap.has(nome)) {
-                    efetivoMap.set(nome, {
-                      nomeCompleto: efetivo.nomeCompleto || '',
-                      cpf: efetivo.cpf || '',
-                      matriculaFuncional: efetivo.matriculaFuncional || '',
-                      dias: []
-                    });
+                const entries = Object.entries(escalaData.efetivo) as [string, any][];
+                for (const [uid, efetivo] of entries) {
+                  const perfil = await readPerfil(uid);
+                  const cpf = (efetivo.cpf || perfil.cpf || '').toString();
+                  const matriculaFuncional = (efetivo.matriculaFuncional || perfil.mf || '').toString();
+                  const nomeCompleto = (efetivo.nomeCompleto || perfil.nomeCompleto || '').toString();
+                  const nomeGuerra = (efetivo.ng || perfil.nomeGuerra || 'Nome não informado').toString();
+                  const key = cpf || uid; // agrupa por CPF; fallback UID
+
+                  if (!efetivoMap.has(key)) {
+                    efetivoMap.set(key, { nomeCompleto, nome: nomeGuerra, cpf, matriculaFuncional, dias: [] });
+                  } else {
+                    const item = efetivoMap.get(key)!;
+                    if (!item.nomeCompleto && nomeCompleto) item.nomeCompleto = nomeCompleto;
+                    if (!item.nome && nomeGuerra) item.nome = nomeGuerra;
+                    if (!item.cpf && cpf) item.cpf = cpf;
+                    if (!item.matriculaFuncional && matriculaFuncional) item.matriculaFuncional = matriculaFuncional;
                   }
-                  
-                  efetivoMap.get(nome)?.dias.push(diaMes);
-                });
+                  efetivoMap.get(key)!.dias.push(diaMes);
+                }
               }
             }
-          });
+          }
         }
         
         // Avança para o próximo mês
@@ -187,9 +210,9 @@ export default function Planilha() {
 
       // Converte Map para array e ordena por nome
       const efetivoArray: EfetivoEscalado[] = Array.from(efetivoMap.entries())
-        .map(([nome, dados]) => ({
-          nome,
-          nomeCompleto: dados.nomeCompleto,
+        .map(([key, dados]) => ({
+          nome: dados.nome || 'Nome não informado',
+          nomeCompleto: dados.nomeCompleto || dados.nome || 'Nome não informado',
           cpf: dados.cpf,
           matriculaFuncional: dados.matriculaFuncional,
           dias: [...new Set(dados.dias)].sort((a, b) => {
@@ -500,7 +523,7 @@ export default function Planilha() {
           const valorGrupo = qtdDias * VALOR_POR_DIA;
           
           const row = [];
-          row.push( (efetivo.nomeCompleto || efetivo.nome || '').toUpperCase()); // Nome em CAIXA ALTA em cada linha
+          row.push( (efetivo.nomeCompleto || efetivo.nome || 'Nome não informado').toUpperCase()); // Nome em CAIXA ALTA em cada linha
           row.push( efetivo.cpf || ''); // CPF em cada linha
           row.push( efetivo.matriculaFuncional || ''); // Matrícula funcional em cada linha
           
@@ -891,9 +914,16 @@ export default function Planilha() {
             <div className="flex justify-end pt-4">
               <button
                 type="submit"
-                className="px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+                className="inline-flex items-center gap-2 px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isLoadingView}
               >
-                Visualizar
+                {isLoadingView && (
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4 animate-spin">
+                    <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                    <path d="M12 2a10 10 0 0 1 10 10" strokeOpacity="0.75" />
+                  </svg>
+                )}
+                <span>Visualizar</span>
               </button>
             </div>
           </form>
@@ -923,7 +953,7 @@ export default function Planilha() {
             <div className="space-y-3">
               {efetivoEscalado.map((efetivo, index) => {
                 // Divide os dias em grupos de 12
-                const diasPorLinha = 12;
+                const diasPorLinha = 50;
                 const linhas = [];
                 for (let i = 0; i < efetivo.dias.length; i += diasPorLinha) {
                   linhas.push(efetivo.dias.slice(i, i + diasPorLinha));
@@ -932,7 +962,19 @@ export default function Planilha() {
                 return (
                   <div key={index} className="space-y-2">
                     {linhas.map((linhaDias, linhaIndex) => (
-                      <div key={linhaIndex} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div
+                        key={linhaIndex}
+                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100"
+                        onClick={() => {
+                          navigate('/planilha/efetivo', {
+                            state: {
+                              efetivo,
+                              unidade: formData.unidade,
+                              periodo: { inicio: formData.dataInicial, fim: formData.dataFinal }
+                            }
+                          })
+                        }}
+                      >
                         <div className="font-medium text-gray-text min-w-[150px]">
                           {linhaIndex === 0 ? (efetivo.nomeCompleto || efetivo.nome) : ''}
                           {linhaIndex === 0 && efetivo.nomeCompleto && efetivo.nomeCompleto !== efetivo.nome && (
@@ -941,7 +983,7 @@ export default function Planilha() {
                             </div>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap flex-end gap-2">
                           {linhaDias.map((dia, diaIndex) => (
                             <span
                               key={`${linhaIndex}-${diaIndex}`}

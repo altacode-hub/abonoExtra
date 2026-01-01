@@ -85,6 +85,8 @@ exports.onInscricaoRequest = (0, https_1.onCall)(async (request) => {
     // Cria inscrição
     const userSnap = await db.ref(`/usuarios/${uid}`).get();
     const user = userSnap.val();
+    const tokenSnap = await db.ref(`/users/${uid}/fcmToken`).get();
+    const fcmToken = tokenSnap.val();
     await inscricaoRef.set({
         userId: uid,
         nome: user?.nome || '',
@@ -100,9 +102,13 @@ exports.onInscricaoRequest = (0, https_1.onCall)(async (request) => {
     await logRef.set({ acao: 'inscricao', userId: uid, detalhes: { missaoId, turnoId }, timestamp: Date.now() });
     // Notificações (FCM + email) — placeholders
     try {
-        const token = user?.fcmToken;
+        const token = fcmToken;
         if (token) {
-            await messaging.send({ token, notification: { title: 'Inscrição confirmada', body: `Missão ${missaoId} turno ${turnoId}` } });
+            await messaging.send({
+                token,
+                notification: { title: 'Inscrição confirmada', body: `Missão ${missaoId} turno ${turnoId}` },
+                data: { link: `/missoes/${missaoId}` }
+            });
         }
         // Envio de e-mail: integrar com SendGrid via Web API (chave em secrets/CI)
     }

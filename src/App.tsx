@@ -21,6 +21,7 @@ import MissoesPessoal from './pages/MissoesPessoal';
 import CabecalhoPlanilha from './pages/CabecalhoPlanilha';
 import CabecalhoMissoes from './pages/CabecalhoMissoes';
 import GerarPDF from './pages/GerarPDF';
+import PlanilhaEfetivo from './pages/PlanilhaEfetivo';
 
 function App() {
   return (
@@ -112,6 +113,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Planilha />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/planilha/efetivo"
+          element={
+            <ProtectedRoute>
+              <PlanilhaEfetivo />
             </ProtectedRoute>
           }
         />

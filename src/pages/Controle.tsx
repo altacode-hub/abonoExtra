@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { auth, db } from '../services/firebase';
 import { get, onValue, ref } from 'firebase/database';
+//componentes
+import { UserProfiles } from '../components/UserProfiles';
+import TopContribuintes from '../components/Controle/TopContribuintes';
 
 type UnitOption = { code: string; titulo: string };
 
@@ -13,7 +16,6 @@ export default function Controle() {
   const [totalEfetivoMes, setTotalEfetivoMes] = useState<number>(0);
   const [membersCount, setMembersCount] = useState<number>(0);
   const [servedCount, setServedCount] = useState<number>(0);
-  const [memberCounts, setMemberCounts] = useState<Record<string, { name: string; count: number }>>({});
   const [dailyCounts, setDailyCounts] = useState<Record<string, number>>({});
 
   const initialMonthKey = useMemo(() => {
@@ -51,6 +53,7 @@ export default function Controle() {
     };
   }, [selectedUnit]);
 
+  const [memberUids, setMemberUids] = useState<string[]>([]);
   useEffect(() => {
     if (!selectedUnit) return;
     const quotaRef = ref(db, `/units/${selectedUnit}/settings/extrasQuota/${monthKey}`);
@@ -58,75 +61,77 @@ export default function Controle() {
       const val = snap.val();
       setMonthlyQuota(Number.isFinite(val) ? Number(val) : 0);
     });
-    const idxRef = ref(db, `/units/${selectedUnit}/escalasIndex/${monthKey}`);
-    const unsubIdx = onValue(idxRef, (snap) => {
-      const byId = snap.val() || {};
-      let sum = 0;
-      const counts: Record<string, number> = {};
-      Object.values(byId).forEach((d: any) => {
-        const cnt = Number(d?.efetivoCount || 0);
-        sum += cnt;
-        const ts = Number(d?.inicioTs || d?.fimTs || 0);
-        if (ts) {
-          const dt = new Date(ts);
-          const y = dt.getFullYear();
-          const m = String(dt.getMonth() + 1).padStart(2, '0');
-          const dd = String(dt.getDate()).padStart(2, '0');
-          const key = `${y}-${m}-${dd}`;
-          counts[key] = (counts[key] || 0) + cnt;
-        }
-      });
-      setTotalEfetivoMes(sum);
-      setDailyCounts(counts);
-    });
     const membersRef = ref(db, `/units/${selectedUnit}/members`);
     const unsubMembers = onValue(membersRef, (snap) => {
       const obj = snap.val() || {};
-      setMembersCount(Object.keys(obj).length);
-    });
-    const escRef = ref(db, `/units/${selectedUnit}/escalas/${monthKey}`);
-    const unsubEsc = onValue(escRef, (snap) => {
-      const byId = snap.val() || {};
-      const served = new Set<string>();
-      const counts: Record<string, { name: string; count: number }> = {};
-      Object.values(byId).forEach((esc: any) => {
-        const ef = esc?.efetivo || {};
-        Object.entries(ef).forEach(([uid, info]: [string, any]) => {
-          served.add(uid);
-          const name = info?.nomeCompleto || info?.nome || uid;
-          const prev = counts[uid]?.count || 0;
-          counts[uid] = { name, count: prev + 1 };
-        });
-      });
-      setServedCount(served.size);
-      setMemberCounts(counts);
+      const uids = Object.keys(obj);
+      setMembersCount(uids.length);
+      setMemberUids(uids);
     });
     return () => {
       unsubQuota();
-      unsubIdx();
       unsubMembers();
-      unsubEsc();
     };
   }, [selectedUnit, monthKey]);
 
+  useEffect(() => {
+    (async () => {
+      if (!selectedUnit || memberUids.length === 0) {
+        setTotalEfetivoMes(0);
+        setServedCount(0);
+        setDailyCounts({});
+        return;
+      }
+      const countsByUid: Record<string, number> = {};
+      const daily: Record<string, number> = {};
+      const names: Record<string, string> = {};
+      for (const uid of memberUids) {
+        try {
+          const snap = await get(ref(db, `/userEscalas/${uid}/${monthKey}`));
+          const val = snap.val() || {};
+          let cnt = 0;
+          Object.values(val).forEach((entry: any) => {
+            if ((entry?.unitId || '') !== selectedUnit) return;
+            cnt += 1;
+            const ts = Number(entry?.inicioTs || entry?.fimTs || 0);
+            if (ts) {
+              const dt = new Date(ts);
+              const y = dt.getFullYear();
+              const m = String(dt.getMonth() + 1).padStart(2, '0');
+              const dd = String(dt.getDate()).padStart(2, '0');
+              const key = `${y}-${m}-${dd}`;
+              daily[key] = (daily[key] || 0) + 1;
+            }
+          });
+          countsByUid[uid] = cnt;
+          if (cnt > 0) {
+            try {
+              const pSnap = await get(ref(db, `/users/${uid}/profile`));
+              const p = pSnap.val() || {};
+              names[uid] = p?.nomeCompleto || p?.nomeGuerra || uid;
+            } catch {
+              names[uid] = uid;
+            }
+          }
+        } catch {
+          countsByUid[uid] = 0;
+        }
+      }
+      const served = Object.values(countsByUid).filter((v) => v > 0).length;
+      const total = Object.values(countsByUid).reduce((sum, v) => sum + v, 0);
+      const counts: Record<string, { name: string; count: number }> = {};
+      Object.entries(countsByUid).forEach(([uid, v]) => {
+        if (v > 0) counts[uid] = { name: names[uid] || uid, count: v };
+      });
+      setServedCount(served);
+      setTotalEfetivoMes(total);
+      setDailyCounts(daily);
+    })();
+  }, [selectedUnit, monthKey, memberUids]);
+
   const notServedCount = Math.max(0, membersCount - servedCount);
   const quotaProgress = monthlyQuota > 0 ? Math.min(100, Math.round((totalEfetivoMes / monthlyQuota) * 100)) : 0;
-  const servedProgress = membersCount > 0 ? Math.min(100, Math.round((servedCount / membersCount) * 100)) : 0;
-
-  const MemberExtrasPieData = useMemo(() => {
-    const entries = Object.values(memberCounts);
-    if (entries.length === 0) return [] as { label: string; value: number; color: string }[];
-    entries.sort((a, b) => b.count - a.count);
-    const palette = ['#1D4ED8', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#22C55E', '#E11D48', '#0EA5E9'];
-    const top = entries.slice(0, 8);
-    const rest = entries.slice(8);
-    const data = top.map((e, i) => ({ label: e.name, value: e.count, color: palette[i % palette.length] }));
-    if (rest.length > 0) {
-      const others = rest.reduce((sum, e) => sum + e.count, 0);
-      data.push({ label: 'Outros', value: others, color: '#9CA3AF' });
-    }
-    return data;
-  }, [memberCounts]);
+  
 
   const daysInMonth = useMemo(() => {
     const [yStr, mStr] = monthKey.split('-');
@@ -149,7 +154,7 @@ export default function Controle() {
     return series;
   }, [dailyCounts, daysInMonth, monthKey]);
 
-  function BarChart({ values, labels, height = 220, color = '#0EA5E9' }: { values: number[]; labels: string[]; height?: number; color?: string }) {
+  function BarChart({ values, height = 220, color = '#0EA5E9' }: { values: number[]; labels: string[]; height?: number; color?: string }) {
     const w = 640;
     const h = height;
     const padding = 28;
@@ -207,7 +212,7 @@ export default function Controle() {
     );
   }
 
-  function PieChart({ data, size = 160 }: { data: { label: string; value: number; color: string }[]; size?: number }) {
+  function PieChart({ data, size = 160, onItemClick }: { data: { label: string; value: number; color: string; uid?: string }[]; size?: number; onItemClick?: (item: { label: string; value: number; color: string; uid?: string }) => void }) {
     const total = data.reduce((sum, d) => sum + (d.value || 0), 0);
     const segments = [] as string[];
     let acc = 0;
@@ -228,10 +233,10 @@ export default function Controle() {
         />
         <div className="flex-1 space-y-2">
           {data.map((d) => (
-            <div key={d.label} className="flex items-center justify-between">
+            <div key={d.label} className="flex items-center justify-between cursor-pointer hover:bg-surface-gray rounded px-2 py-1" onClick={() => onItemClick?.(d)}>
               <div className="flex items-center gap-2">
                 <span className="inline-block w-3 h-3 rounded" style={{ background: d.color }} />
-                <span className="text-sm text-gray-text">{d.label}</span>
+                <UserProfiles uidUser={d.uid} />
               </div>
               <span className="text-sm font-medium text-gray-text">{d.value}</span>
             </div>
@@ -309,11 +314,7 @@ export default function Controle() {
           <div className="mt-3 text-xs text-gray-light">Total de membros: {membersCount}</div>
         </section>
 
-        <section className="bg-white border rounded-lg p-6 shadow-card">
-          <h3 className="text-base font-semibold text-gray-text mb-4">Extras por servidor (mês {monthKey})</h3>
-          <PieChart data={MemberExtrasPieData} />
-          <div className="mt-3 text-xs text-gray-light">Mostrando top contribuintes; demais agrupados em "Outros".</div>
-        </section>
+        <TopContribuintes monthKey={monthKey} selectedUnit={selectedUnit} title='Extras por servidor'/>
       </div>
     </div>
   );

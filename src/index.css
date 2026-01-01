@@ -38,3 +38,7 @@ body {
 .btn-outline {
   @apply bg-white border hover:bg-surface-muted;
 }
+.flex-end {
+  @apply justify-end;
+}
+
