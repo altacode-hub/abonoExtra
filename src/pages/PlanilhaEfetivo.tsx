@@ -10,7 +10,9 @@ export default function PlanilhaEfetivo() {
   const periodo = state?.periodo || {}
   const totalJornadas = state?.totalJornadas as number | undefined
   const uniqueDaysCount = state?.uniqueDaysCount as number | undefined
-  const jornadas = Array.isArray(state?.jornadas) ? (state?.jornadas as Array<{ dia: string; titulo?: string; referencia?: string; local?: string }>) : []
+  const jornadas = Array.isArray(state?.jornadas)
+    ? (state?.jornadas as Array<{ dia: string; escalaId?: string; referencia?: string; local?: string }>)
+    : (Array.isArray((efetivo as any)?.jornadas) ? ((efetivo as any).jornadas as Array<{ dia: string; escalaId?: string; referencia?: string; local?: string }>) : [])
   const nome = (efetivo.nomeCompleto || efetivo.nome || 'Nome não informado') as string
   const cpf = (efetivo.cpf || '') as string
   const mf = (efetivo.matriculaFuncional || '') as string
@@ -33,11 +35,14 @@ export default function PlanilhaEfetivo() {
             <div className="text-sm text-gray-text mb-1">Jornadas extras ({typeof totalJornadas === 'number' ? totalJornadas : dias.length})</div>
             {typeof uniqueDaysCount === 'number' && <div className="text-xs text-gray-500 mb-2">Dias distintos ({uniqueDaysCount})</div>}
             {jornadas.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
+              <ul className="divide-y">
                 {jornadas.map((j, i) => (
-                  <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 text-sm rounded-md font-medium">{j.dia}</span>
+                  <li key={i} className="py-2 flex items-center justify-between">
+                    <div className="font-medium text-gray-text">{j.dia}</div>
+                    <div className="text-xs text-gray-500">{j.escalaId || j.referencia || '—'}</div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {dias.map((d, i) => (

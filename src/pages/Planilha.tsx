@@ -16,6 +16,7 @@ interface EfetivoEscalado {
   cpf?: string;
   matriculaFuncional?: string;
   dias: string[];
+  jornadas?: Array<{ dia: string; escalaId: string }>;
 }
 
 interface UnitOption {
@@ -144,8 +145,9 @@ export default function Planilha() {
     try {
       const inicio = new Date(formData.dataInicial);
       const fim = new Date(formData.dataFinal);
-      const efetivoMap = new Map<string, { nomeCompleto?: string; nome?: string; cpf?: string; matriculaFuncional?: string; dias: string[] }>();
+      const efetivoMap = new Map<string, { nomeCompleto?: string; nome?: string; cpf?: string; matriculaFuncional?: string; dias: string[]; jornadas: Array<{ dia: string; escalaId: string }> }>();
       const perfilCache = new Map<string, { nomeCompleto?: string; nomeGuerra?: string; cpf?: string; mf?: string }>();
+      const processedByUser = new Map<string, Set<string>>();
 
       const readPerfil = async (uid: string) => {
         if (perfilCache.has(uid)) return perfilCache.get(uid)!;
@@ -171,8 +173,8 @@ export default function Planilha() {
         const snapshot = await get(escalasRef);
         if (snapshot.exists()) {
           const escalas = snapshot.val();
-          
           for (const [escalaId, escalaData] of Object.entries(escalas) as [string, any][]) {
+            console.log(escalaId)
             const escalaDate = new Date(escalaData.inicioTs);
             // Verifica se a escala está dentro do período
             if (escalaDate >= inicio && escalaDate <= fim) {
@@ -180,6 +182,7 @@ export default function Planilha() {
               // Processa efetivo da escala
               if (escalaData.efetivo) {
                 const entries = Object.entries(escalaData.efetivo) as [string, any][];
+                const seenKeys = new Set<string>();
                 for (const [uid, efetivo] of entries) {
                   const perfil = await readPerfil(uid);
                   const cpf = (efetivo.cpf || perfil.cpf || '').toString();
@@ -188,8 +191,23 @@ export default function Planilha() {
                   const nomeGuerra = (efetivo.ng || perfil.nomeGuerra || 'Nome não informado').toString();
                   const key = cpf || uid; // agrupa por CPF; fallback UID
 
+                  let set = processedByUser.get(key);
+                  if (!set) {
+                    set = new Set<string>();
+                    processedByUser.set(key, set);
+                  }
+                  if (set.has(escalaId)) {
+                    continue;
+                  }
+                  set.add(escalaId);
+
+                  if (seenKeys.has(key)) {
+                    continue;
+                  }
+                  seenKeys.add(key);
+
                   if (!efetivoMap.has(key)) {
-                    efetivoMap.set(key, { nomeCompleto, nome: nomeGuerra, cpf, matriculaFuncional, dias: [] });
+                    efetivoMap.set(key, { nomeCompleto, nome: nomeGuerra, cpf, matriculaFuncional, dias: [], jornadas: [] });
                   } else {
                     const item = efetivoMap.get(key)!;
                     if (!item.nomeCompleto && nomeCompleto) item.nomeCompleto = nomeCompleto;
@@ -198,6 +216,7 @@ export default function Planilha() {
                     if (!item.matriculaFuncional && matriculaFuncional) item.matriculaFuncional = matriculaFuncional;
                   }
                   efetivoMap.get(key)!.dias.push(diaMes);
+                  efetivoMap.get(key)!.jornadas.push({ dia: diaMes, escalaId });
                 }
               }
             }
@@ -207,7 +226,6 @@ export default function Planilha() {
         // Avança para o próximo mês
         currentDate.setMonth(currentDate.getMonth() + 1);
       }
-
       // Converte Map para array e ordena por nome
       const efetivoArray: EfetivoEscalado[] = Array.from(efetivoMap.entries())
         .map(([key, dados]) => ({
@@ -215,10 +233,15 @@ export default function Planilha() {
           nomeCompleto: dados.nomeCompleto || dados.nome || 'Nome não informado',
           cpf: dados.cpf,
           matriculaFuncional: dados.matriculaFuncional,
-          dias: [...new Set(dados.dias)].sort((a, b) => {
-            // Ordena por data (DD/MM)
+          dias: dados.dias.sort((a, b) => {
             const [diaA, mesA] = a.split('/').map(Number);
             const [diaB, mesB] = b.split('/').map(Number);
+            if (mesA !== mesB) return mesA - mesB;
+            return diaA - diaB;
+          }),
+          jornadas: dados.jornadas.sort((ja, jb) => {
+            const [diaA, mesA] = ja.dia.split('/').map(Number);
+            const [diaB, mesB] = jb.dia.split('/').map(Number);
             if (mesA !== mesB) return mesA - mesB;
             return diaA - diaB;
           })
@@ -235,7 +258,9 @@ export default function Planilha() {
       setEfetivoEscalado([]);
     }
   };
-
+  if(efetivoEscalado){
+console.log(efetivoEscalado)
+}
   // Função auxiliar para desenhar o cabeçalho em cada página
   const drawHeader = (doc: jsPDF, pageWidth: number, marginLeft: number, marginRight: number, marginTop: number, currentPage: number, totalPages: number, headerImage?: { imgEl?: HTMLImageElement; dataUrl?: string; format: 'PNG' | 'JPEG' }) => {
     const contentWidth = pageWidth - marginLeft - marginRight;
@@ -970,7 +995,10 @@ export default function Planilha() {
                             state: {
                               efetivo,
                               unidade: formData.unidade,
-                              periodo: { inicio: formData.dataInicial, fim: formData.dataFinal }
+                              periodo: { inicio: formData.dataInicial, fim: formData.dataFinal },
+                              jornadas: efetivo.jornadas || [],
+                              totalJornadas: efetivo.dias.length,
+                              uniqueDaysCount: Array.from(new Set(efetivo.dias)).length
                             }
                           })
                         }}
@@ -980,6 +1008,11 @@ export default function Planilha() {
                           {linhaIndex === 0 && efetivo.nomeCompleto && efetivo.nomeCompleto !== efetivo.nome && (
                             <div className="text-xs text-gray-500 font-normal">
                               ({efetivo.nome})
+                            </div>
+                          )}
+                          {linhaIndex === 0 && (
+                            <div className="text-xs text-gray-500 font-normal">
+                              Extras: {efetivo.dias.length}
                             </div>
                           )}
                         </div>
