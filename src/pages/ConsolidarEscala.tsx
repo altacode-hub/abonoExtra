@@ -7,6 +7,7 @@ import { buildEfetivo, buildEscalaFanout, makeEscalaId, parseHorarioToISO } from
 import { WeeklyCalendar } from '../components/WeeklyCalendar';
 import WhatsappIcon from '../components/WhatsappIcon';
 import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
+import { callSendEscalaNotification } from '../services/functions';
 
 type Enrollment = {
   userId: string;
@@ -83,7 +84,9 @@ export default function ConsolidarEscala() {
     visivel?: boolean;
   }>>({});
   const [unitTitle, setUnitTitle] = useState<string>('');
-  const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean }>>({});
+  const [statusByUid, setStatusByUid] = useState<Record<string, { whatsSent?: boolean; ack?: boolean; pushSent?: boolean }>>({});
+  const [toastMsg, setToastMsg] = useState<string>('');
+  const [toastVisible, setToastVisible] = useState<boolean>(false);
 
   // Helpers movidos para services/firebase/escalas.ts
 
@@ -479,14 +482,14 @@ export default function ConsolidarEscala() {
     }
     let cancelled = false;
     (async () => {
-      const next: Record<string, { whatsSent?: boolean; ack?: boolean }> = {};
+      const next: Record<string, { whatsSent?: boolean; ack?: boolean; pushSent?: boolean }> = {};
       for (const uid of uids) {
         try {
           const sSnap = await get(ref(db, `/userEscalas/${uid}/${monthKey}/${escalaId}/status`));
           const sVal = sSnap.val() || {};
-          next[uid] = { whatsSent: !!sVal.whatsSent, ack: !!sVal.ack };
+          next[uid] = { whatsSent: !!sVal.whatsSent, ack: !!sVal.ack, pushSent: !!sVal.pushSent };
         } catch {
-          next[uid] = { whatsSent: false, ack: false };
+          next[uid] = { whatsSent: false, ack: false, pushSent: false };
         }
       }
       if (!cancelled) setStatusByUid(next);
@@ -583,6 +586,12 @@ export default function ConsolidarEscala() {
     Object.assign(updates, escalaUpdates);
     await update(ref(db), updates);
     navigate(`/escala?unit=${unit}&date=${effectiveDate}`);
+  };
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setToastVisible(true);
+    window.setTimeout(() => setToastVisible(false), 2200);
+    window.setTimeout(() => setToastMsg(''), 2600);
   };
 
   const persistAdd = async (uid: string, nome?: string, email?: string) => {
@@ -1238,6 +1247,50 @@ export default function ConsolidarEscala() {
                               setStatusByUid((prev) => ({ ...prev, [uid]: { ...(prev[uid] || {}), whatsSent: true } }));
                             }}
                           />
+                          <button
+                            className="w-7 h-7 rounded-full flex items-center justify-center cursor-pointer hover:bg-green-50"
+                            title="Enviar notificação push"
+                            aria-label="Enviar push"
+                            onClick={() => {
+                              const effectiveDate = selectedDateIso || date;
+                              const effectiveMission = (selectedTemplateId && selectedTemplateId !== 'manual')
+                                ? selectedTemplateId.split('::')[0]
+                                : (missionId || selectedTemplateId);
+                              const unitCode = unit || '';
+                              const monthKey = (effectiveDate || '').slice(0, 7);
+                              const escalaId = makeEscalaId(
+                                effectiveDate || '',
+                                effectiveMission || '',
+                                missionMeta.referencia || missionMeta.local,
+                                missionMeta.local
+                              );
+                              callSendEscalaNotification({
+                                unit: unitCode,
+                                date: effectiveDate || undefined,
+                                mission: effectiveMission || undefined,
+                                uids: [uid],
+                                title: 'Você foi escalado',
+                                body: `Confira suas escalas em ${formatDateLabel(effectiveDate || '')}`,
+                                link: '/missoesPessoal',
+                              })
+                                .then((res) => {
+                                  console.log(res.data)
+                                  const data = res.data as any;
+                                  if (data?.ok) {
+                                    const path = `/userEscalas/${uid}/${monthKey}/${escalaId}/status`;
+                                    update(ref(db, path), { pushSent: true, pushSentTs: Date.now() }).catch(() => {});
+                                    setStatusByUid((prev) => ({ ...prev, [uid]: { ...(prev[uid] || {}), pushSent: true } }));
+                                  }
+                                })
+                                .catch(() => {
+                                  console.log("erro")
+                                });
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" className={`w-5 h-5 ${statusByUid[uid]?.pushSent ? 'text-green-600' : 'text-gray-400'}`} fill="currentColor" aria-hidden="true">
+                              <path d="M12 2a7 7 0 0 0-7 7v3.5L3 14v1h18v-1l-2-1.5V9a7 7 0 0 0-7-7zm0 20a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22z"></path>
+                            </svg>
+                          </button>
                           {/* Status ícones conforme estado atual */}
                           {statusByUid[uid]?.ack ? (
                             <StatusAckGiven />
@@ -1255,7 +1308,45 @@ export default function ConsolidarEscala() {
               </ul>
             </div>
           </div>
-          <div className="flex justify-end mt-4">
+          <div className="flex justify-end mt-4 gap-2">
+            {selectedUids.length > 0 && (
+              <button
+                className="px-4 py-2 border rounded hover:bg-gray-50"
+                title="Enviar push para todos escalados"
+                onClick={() => {
+                  const effectiveDate = selectedDateIso || date;
+                  const effectiveMission = 
+                  (selectedTemplateId && selectedTemplateId !== 'manual')
+                    ? selectedTemplateId.split('::')[0]
+                    : (missionId || selectedTemplateId);
+                  const unitCode = unit || '';
+                  callSendEscalaNotification({
+                    unit: unitCode,
+                    date: effectiveDate || undefined,
+                    mission: effectiveMission || undefined,
+                    uids: selectedUids,
+                    title: 'Escala publicada',
+                    body: `Confira suas escalas do dia ${formatDateLabel(effectiveDate || '')}`,
+                    link: '/missoesPessoal',
+                  })
+                    .then((res) => {
+                      const data = res.data as any;
+                      if (data?.res.ok) {
+                        const sent = Number(data?.res.sent || 0);
+                        showToast(sent > 0 ? `Push enviado para ${sent} efetivo(s)` : 'Nenhum push enviado');
+                      } else {
+                        showToast('Falha ao enviar push');
+                      }
+                      console.log(data.res.sent)
+                    })
+                    .catch(() => {
+                      showToast('Erro de rede ao enviar push');
+                    });
+                }}
+              >
+                Enviar push para todos escalados
+              </button>
+            )}
             <button className="px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark" onClick={finalize}>Gerar escala</button>
           </div>
           {funcModalUid && (
@@ -1360,6 +1451,11 @@ export default function ConsolidarEscala() {
           )}
         </section>
       </div>
+      {toastMsg && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-sm px-4 py-2 rounded shadow-lg transition-opacity duration-300 ${toastVisible ? 'opacity-100' : 'opacity-0'}`}>
+          {toastMsg}
+        </div>
+      )}
     </div>
   );
 }

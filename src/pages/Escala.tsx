@@ -8,6 +8,7 @@ import { MissionCard } from '../components/MissionCard';
 import WhatsappIcon from '../components/WhatsappIcon';
 import { StatusWhatsNotSent, StatusWhatsSent, StatusAckGiven } from '../components/StatusIcons';
 import { makeEscalaId } from '../services/firebase/escalas';
+import { UserProfiles } from '../components/UserProfiles';
 
 type UnitMeta = { titulo: string; descricao?: string; cidade?: string };
 type Enrollment = {
@@ -437,7 +438,7 @@ export default function Escala() {
                                 <div className="flex flex-wrap gap-2">
                                   {voluntarios.map((v) => (
                                     <span key={v.uid} className="inline-flex items-center gap-2 rounded px-2 py-1 text-xs">
-                                      <span className="font-medium text-gray-text">{v.nome}</span>
+                                      <UserProfiles uidUser={v.uid} unitCode={selectedUnit} campo="nomeGuerra" />
                                     </span>
                                   ))}
                                 </div>

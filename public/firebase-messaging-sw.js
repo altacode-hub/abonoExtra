@@ -11,6 +11,7 @@ self.addEventListener('message', (event) => {
       firebase.initializeApp({ messagingSenderId: String(senderId) });
       const messaging = firebase.messaging();
       messaging.onBackgroundMessage((payload) => {
+        console.log('Received background message ', payload);
         const title = (payload && payload.notification && payload.notification.title) || 'Nova notificação';
         const body = (payload && payload.notification && payload.notification.body) || '';
         const link = (payload && payload.data && payload.data.link) || '/';

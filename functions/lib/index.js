@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cronCleanup = exports.onCancelamento = exports.onInscricaoRequest = void 0;
+exports.onSendEscalaNotification = exports.cronCleanup = exports.onCancelamento = exports.onInscricaoRequest = void 0;
 const admin = __importStar(require("firebase-admin"));
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -160,4 +160,50 @@ exports.cronCleanup = (0, scheduler_1.onSchedule)('every monday 03:00', async ()
     });
     if (Object.keys(updates).length)
         await db.ref('/').update(updates);
+});
+exports.onSendEscalaNotification = (0, https_1.onCall)(async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid)
+        return { ok: false, reason: 'unauthenticated' };
+    const { unit, uids, title, body, link } = request.data || {};
+    if (!Array.isArray(uids) || uids.length === 0)
+        return { ok: false, reason: 'invalid-args' };
+    if (unit) {
+        try {
+            const adminSnap = await db.ref(`/roles/${callerUid}/unitAdmin/${unit}`).get();
+            const isUnitAdmin = adminSnap.exists() && adminSnap.val() === true;
+            const generalSnap = await db.ref(`/roles/${callerUid}/generalAdmin`).get();
+            const isGeneral = generalSnap.exists() && generalSnap.val() === true;
+            if (!isUnitAdmin && !isGeneral)
+                return { ok: false, reason: 'permission-denied' };
+        }
+        catch {
+            return { ok: false, reason: 'permission-check-failed' };
+        }
+    }
+    const titleFinal = title || 'Escala publicada';
+    const bodyFinal = body || 'Você foi escalado. Confira seus detalhes.';
+    const linkFinal = link || '/missoesPessoal';
+    let sent = 0;
+    const tokens = [];
+    for (const uid of uids) {
+        try {
+            const devicesSnap = await db.ref(`/users/${uid}/fcmDevices`).get();
+            const devices = devicesSnap.val() || {};
+            Object.values(devices).forEach((d) => {
+                const t = d?.token;
+                const active = d?.active === true;
+                if (active && typeof t === 'string' && t.length > 0)
+                    tokens.push(t);
+            });
+        }
+        catch { }
+    }
+    const batches = tokens.map((token) => messaging.send({
+        token,
+        notification: { title: titleFinal, body: bodyFinal },
+        data: { link: linkFinal },
+    }).then(() => { sent += 1; }).catch(() => { }));
+    await Promise.all(batches);
+    return { ok: true, sent };
 });

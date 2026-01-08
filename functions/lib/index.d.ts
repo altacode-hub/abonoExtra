@@ -9,4 +9,14 @@ type CancelPayload = {
 };
 export declare const onCancelamento: import("firebase-functions/v2/https").CallableFunction<CancelPayload, any>;
 export declare const cronCleanup: import("firebase-functions/v2/scheduler").ScheduleFunction;
+type SendNotificationPayload = {
+    unit?: string;
+    date?: string;
+    mission?: string;
+    uids: string[];
+    title?: string;
+    body?: string;
+    link?: string;
+};
+export declare const onSendEscalaNotification: import("firebase-functions/v2/https").CallableFunction<SendNotificationPayload, any>;
 export {};

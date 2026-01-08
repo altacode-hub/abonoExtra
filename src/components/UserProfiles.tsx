@@ -6,9 +6,10 @@ import { isGeneralAdmin, isUnitAdmin } from '../services/rbac';
 interface Props {
   uidUser?: string;
   unitCode?: string;
+  campo?: 'nomeGuerra' | 'nomeCompleto';
 }
 
-export const UserProfiles: React.FC<Props> = ({ uidUser, unitCode }) => {
+export const UserProfiles: React.FC<Props> = ({ uidUser, unitCode, campo }) => {
   const [profile, setProfile] = useState<{ nomeGuerra?: string; nomeCompleto?: string } | null>(null);
   const [allowed, setAllowed] = useState<boolean | null>(null);
 
@@ -42,6 +43,10 @@ export const UserProfiles: React.FC<Props> = ({ uidUser, unitCode }) => {
   if (allowed === null) return null;
   if (!allowed) return null;
 
+  if (campo === 'nomeGuerra') return (
+    <span className="text-sm text-gray-text">{profile?.nomeGuerra}</span>
+  );
+  
   return (
     <span className="text-sm text-gray-text">{profile?.nomeCompleto}</span>
   );

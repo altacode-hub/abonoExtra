@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { onValue, ref, update } from 'firebase/database';
 import { auth, db } from '../services/firebase';
-import { ensureFcmTokenForUserWithStatus } from '../services/firebase/messaging';
+import { ensureFcmTokenForUserWithStatus, getCurrentDeviceId, activateCurrentDevice } from '../services/firebase/messaging';
 import PageHeader from '../components/PageHeader';
 
 type PerfilData = {
@@ -23,6 +23,9 @@ export default function Perfil() {
   const [fcmRefreshing, setFcmRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [fcmMessage, setFcmMessage] = useState<string | null>(null);
+  const [deviceActive, setDeviceActive] = useState<boolean>(false);
+  const [activating, setActivating] = useState<boolean>(false);
+  const [deviceId, setDeviceId] = useState<string>('');
   const required = ['nomeCompleto', 'nomeGuerra', 'rg', 'cpf', 'mf', 'dataNascimento', 'phone'] as const;
   const isComplete = required.every((k) => String((perfil as any)[k] || '').trim().length > 0);
 
@@ -44,6 +47,19 @@ export default function Perfil() {
     const unsub = onValue(r, (snap) => {
       const val = snap.val();
       setFcmToken(val ? String(val) : null);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const id = getCurrentDeviceId();
+    setDeviceId(id);
+    const r = ref(db, `/users/${uid}/fcmDevices/${id}/active`);
+    const unsub = onValue(r, (snap) => {
+      const val = snap.val();
+      setDeviceActive(!!val);
     });
     return () => unsub();
   }, []);
@@ -93,6 +109,18 @@ export default function Perfil() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {}
+  };
+
+  const activateDevice = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    setActivating(true);
+    try {
+      const ok = await activateCurrentDevice();
+      setFcmMessage(ok ? 'Este dispositivo foi ativado para receber notificações.' : 'Falha ao ativar este dispositivo.');
+    } finally {
+      setActivating(false);
+    }
   };
 
   return (
@@ -168,6 +196,16 @@ export default function Perfil() {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   )}
                 </button>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className={`text-xs ${deviceActive ? 'text-green-700' : 'text-yellow-700'}`}>
+                  {deviceActive ? 'Este dispositivo está ativo para receber notificações.' : 'Este dispositivo não está ativo para receber notificações.'}
+                </span>
+                {!deviceActive && (
+                  <button onClick={activateDevice} disabled={activating} className="px-2 py-1 text-xs border rounded hover:bg-gray-50">
+                    {activating ? 'Ativando...' : 'Ativar este dispositivo'}
+                  </button>
+                )}
               </div>
               {fcmMessage && <div className="text-xs text-yellow-700 mt-1">{fcmMessage}</div>}
             </label>
